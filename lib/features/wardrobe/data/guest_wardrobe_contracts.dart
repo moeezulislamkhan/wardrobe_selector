@@ -1,18 +1,18 @@
 import 'dart:typed_data';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../../../core/errors/app_error.dart';
 import '../domain/guest_wardrobe_item.dart';
-
-final guestWardrobeSourceProvider = Provider<GuestWardrobeSource>(
-  (ref) => const EmptyGuestWardrobeSource(),
-);
 
 abstract interface class GuestWardrobeSource {
   Future<List<GuestWardrobeItem>> loadItems();
 
   Future<Uint8List> readImage(String localImagePath);
+}
+
+abstract interface class WardrobeRepository implements GuestWardrobeSource {
+  Future<void> setFavorite(String localId, bool isFavorite);
+
+  Future<void> setArchived(String localId, bool isArchived);
 }
 
 class EmptyGuestWardrobeSource implements GuestWardrobeSource {

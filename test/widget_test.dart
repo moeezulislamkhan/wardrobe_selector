@@ -36,7 +36,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Your wardrobe starts here'), findsOneWidget);
+    expect(find.text('Your wardrobe is empty'), findsOneWidget);
   });
 
   testWidgets('theme preference is applied and persisted', (tester) async {

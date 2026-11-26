@@ -10,14 +10,14 @@ import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/onboarding/presentation/reset_password_screen.dart';
 import '../features/outfits/presentation/outfits_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
+import '../features/wardrobe/presentation/wardrobe_item_detail_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_screen.dart';
 import 'shell/navigation_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final onboardingRepository = ref.watch(onboardingRepositoryProvider);
   final router = GoRouter(
-    initialLocation:
-        onboardingRepository.isCompleted ? '/' : '/onboarding',
+    initialLocation: onboardingRepository.isCompleted ? '/' : '/onboarding',
     redirect: (context, state) {
       final isOnboarding = state.matchedLocation == '/onboarding';
       if (!onboardingRepository.isCompleted && !isOnboarding) {
@@ -70,6 +70,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: '/wardrobe',
                 name: 'wardrobe',
                 builder: (context, state) => const WardrobeScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'items/:itemId',
+                    name: 'wardrobe-item-detail',
+                    builder: (context, state) => WardrobeItemDetailScreen(
+                      itemId: state.pathParameters['itemId']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

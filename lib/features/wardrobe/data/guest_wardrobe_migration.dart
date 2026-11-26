@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/errors/app_error.dart';
 import '../domain/guest_wardrobe_item.dart';
 import 'guest_wardrobe_contracts.dart';
+import 'local_wardrobe_repository.dart';
 import 'supabase_wardrobe_cloud_store.dart';
 
 final guestWardrobeCloudStoreProvider = Provider<GuestWardrobeCloudStore>(
@@ -17,17 +18,10 @@ final guestWardrobeMigratorProvider = Provider<GuestWardrobeMigrator>((ref) {
 });
 
 class GuestWardrobeMigrator {
-  const GuestWardrobeMigrator({
-    required this.source,
-    required this.cloudStore,
-  });
+  const GuestWardrobeMigrator({required this.source, required this.cloudStore});
 
   static const maxImageBytes = 10 * 1024 * 1024;
-  static const _supportedImageTypes = {
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-  };
+  static const _supportedImageTypes = {'image/jpeg', 'image/png', 'image/webp'};
 
   final GuestWardrobeSource source;
   final GuestWardrobeCloudStore cloudStore;
@@ -98,10 +92,7 @@ class GuestWardrobeMigrator {
     return migratedCount;
   }
 
-  static void _validateItem(
-    GuestWardrobeItem item,
-    Set<String> seenIds,
-  ) {
+  static void _validateItem(GuestWardrobeItem item, Set<String> seenIds) {
     final localId = item.localId.trim();
     if (localId.isEmpty || localId.length > 128) {
       throw const AppError('A wardrobe item has an invalid local identifier.');
