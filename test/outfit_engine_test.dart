@@ -63,6 +63,43 @@ void main() {
     expect(result.fallbackExplanation, contains('shoes'));
   });
 
+  test(
+    'regeneration excludes the combinations just shown when alternatives exist',
+    () {
+      final wardrobe = [
+        _item('top-1', 'Blue shirt', 'Tops'),
+        _item('top-2', 'White tee', 'Tops'),
+        _item('bottom-1', 'Black jeans', 'Bottoms'),
+        _item('bottom-2', 'Beige trousers', 'Bottoms'),
+        _item('shoe-1', 'Black sneakers', 'Shoes'),
+        _item('shoe-2', 'White flats', 'Shoes'),
+      ];
+      final firstPage = engine.generate(wardrobe);
+      final nextPage = engine.generate(
+        wardrobe,
+        request: OutfitRequest(
+          excludedCombinationKeys: firstPage.suggestions
+              .map((suggestion) => suggestion.combinationKey)
+              .toSet(),
+        ),
+      );
+
+      expect(firstPage.suggestions, hasLength(4));
+      expect(nextPage.suggestions, hasLength(4));
+      expect(
+        nextPage.suggestions
+            .map((suggestion) => suggestion.combinationKey)
+            .toSet()
+            .intersection(
+              firstPage.suggestions
+                  .map((suggestion) => suggestion.combinationKey)
+                  .toSet(),
+            ),
+        isEmpty,
+      );
+    },
+  );
+
   test('occasion, season, preferences, and recent wear affect ranking', () {
     final wardrobe = [
       _item(

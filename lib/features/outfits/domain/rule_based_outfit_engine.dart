@@ -4,6 +4,7 @@ class OutfitItem {
     required this.title,
     required this.category,
     this.subcategory,
+    this.imagePath,
     this.primaryColor,
     this.secondaryColor,
     this.occasions = const [],
@@ -18,6 +19,7 @@ class OutfitItem {
   final String title;
   final String category;
   final String? subcategory;
+  final String? imagePath;
   final String? primaryColor;
   final String? secondaryColor;
   final List<String> occasions;
@@ -55,6 +57,7 @@ class OutfitRequest {
     this.weather,
     this.preferences = const OutfitPreferences(),
     this.lastWornAt = const {},
+    this.excludedCombinationKeys = const {},
     this.now,
   });
 
@@ -63,6 +66,7 @@ class OutfitRequest {
   final OutfitWeather? weather;
   final OutfitPreferences preferences;
   final Map<String, DateTime> lastWornAt;
+  final Set<String> excludedCombinationKeys;
   final DateTime? now;
 }
 
@@ -91,6 +95,8 @@ class OutfitSuggestion {
     if (accessory != null) outfitItems.add(accessory!);
     return List.unmodifiable(outfitItems);
   }
+
+  String get combinationKey => '${top.id}|${bottom.id}|${shoes.id}';
 }
 
 class OutfitGenerationResult {
@@ -213,7 +219,13 @@ class RuleBasedOutfitEngine {
     }
 
     final selected = <OutfitSuggestion>[];
-    final remaining = [...candidates];
+    final remaining = candidates
+        .where(
+          (candidate) => !request.excludedCombinationKeys.contains(
+            candidate.combinationKey,
+          ),
+        )
+        .toList();
     while (selected.length < 4 && remaining.isNotEmpty) {
       remaining.sort((first, second) {
         final firstRank = _diversityAdjustedScore(first, selected);
