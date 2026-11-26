@@ -10,9 +10,20 @@ abstract interface class GuestWardrobeSource {
 }
 
 abstract interface class WardrobeRepository implements GuestWardrobeSource {
+  Future<GuestWardrobeItem> createItem(
+    GuestWardrobeItem item,
+    Uint8List photoBytes,
+  );
+
   Future<void> setFavorite(String localId, bool isFavorite);
 
   Future<void> setArchived(String localId, bool isArchived);
+
+  Future<void> setCloudSyncState(
+    String localId, {
+    required bool pending,
+    String? error,
+  });
 }
 
 class EmptyGuestWardrobeSource implements GuestWardrobeSource {

@@ -1,11 +1,16 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../domain/guest_wardrobe_item.dart';
 import 'guest_wardrobe_contracts.dart';
+
+final guestWardrobeCloudStoreProvider = Provider<GuestWardrobeCloudStore>(
+  (ref) => SupabaseWardrobeCloudStore(),
+);
 
 class SupabaseWardrobeCloudStore implements GuestWardrobeCloudStore {
   SupabaseWardrobeCloudStore({this.client});
@@ -77,11 +82,21 @@ class SupabaseWardrobeCloudStore implements GuestWardrobeCloudStore {
     final row = <String, Object?>{
       'user_id': userId,
       'local_id': item.localId,
-      'name': item.name,
+      'name': item.title,
+      'title': item.title,
       'category': item.category,
-      'color': item.color,
+      'subcategory': item.subcategory,
+      'color': item.primaryColor,
+      'primary_color': item.primaryColor,
+      'secondary_color': item.secondaryColor,
+      'style_tags': item.styleTags,
+      'occasion': item.occasionValues.firstOrNull,
+      'season': item.seasonValues.firstOrNull,
       'brand': item.brand,
       'size': item.size,
+      'notes': item.notes,
+      'is_favorite': item.isFavorite,
+      'is_archived': item.isArchived,
       'created_at': item.createdAt.toUtc().toIso8601String(),
       'image_path': imagePath,
     };

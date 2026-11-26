@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/errors/app_error.dart';
+import '../../auth/presentation/auth_providers.dart';
 import '../data/local_wardrobe_repository.dart';
+import '../data/wardrobe_sync_service.dart';
 import '../domain/guest_wardrobe_item.dart';
 import 'wardrobe_photo.dart';
 
@@ -35,6 +39,15 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(authSessionProvider);
+    ref.listen(authSessionProvider, (previous, next) {
+      final session = next.asData?.value;
+      if (session == null ||
+          previous?.asData?.value?.userId == session.userId) {
+        return;
+      }
+      unawaited(_syncPendingAfterSignIn(session.userId));
+    });
     final items = ref.watch(wardrobeItemsProvider);
     return Scaffold(
       appBar: AppBar(
@@ -53,6 +66,11 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
             isSelected: _layout == _GalleryLayout.list,
             icon: const Icon(Icons.view_list_outlined),
             selectedIcon: const Icon(Icons.view_list),
+          ),
+          IconButton(
+            tooltip: 'Add wardrobe item',
+            onPressed: () => context.pushNamed('wardrobe-item-add'),
+            icon: const Icon(Icons.add_a_photo_outlined),
           ),
           const SizedBox(width: 8),
         ],
@@ -78,6 +96,7 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
           hasActiveFilters: false,
           mode: _CollectionMode.active,
           onClear: _clearFilters,
+          onAdd: () => context.pushNamed('wardrobe-item-add'),
         ),
       );
     }
@@ -207,6 +226,18 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
             ]),
           ),
         ),
+        if (items.any((item) => item.needsCloudSync))
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: _PendingSyncBanner(
+                count: items.where((item) => item.needsCloudSync).length,
+                signedIn:
+                    ref.read(authGatewayProvider)?.currentSession != null,
+                onRetry: _retryPendingUploads,
+              ),
+            ),
+          ),
         if (visibleItems.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
@@ -215,6 +246,7 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
               hasActiveFilters: _hasActiveFilters,
               mode: _mode,
               onClear: _clearFilters,
+              onAdd: () => context.pushNamed('wardrobe-item-add'),
             ),
           )
         else if (_layout == _GalleryLayout.grid)
@@ -264,15 +296,20 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
       item.color ?? '',
       item.brand ?? '',
       item.size ?? '',
-      ...item.occasions,
-      ...item.seasons,
+      ...item.occasionValues,
+      ...item.seasonValues,
+      ...item.styleTags,
+      item.subcategory ?? '',
+      item.secondaryColor ?? '',
     ].join(' ').toLowerCase();
 
     return (_category == null || item.category == _category) &&
         (_colors.isEmpty ||
-            (item.color != null && _colors.contains(item.color))) &&
-        (_occasions.isEmpty || item.occasions.any(_occasions.contains)) &&
-        (_seasons.isEmpty || item.seasons.any(_seasons.contains)) &&
+            (_colors.contains(item.primaryColor) ||
+                _colors.contains(item.secondaryColor))) &&
+        (_occasions.isEmpty ||
+            item.occasionValues.any(_occasions.contains)) &&
+        (_seasons.isEmpty || item.seasonValues.any(_seasons.contains)) &&
         (query.isEmpty || searchable.contains(query));
   }
 
@@ -282,9 +319,11 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => _FilterSheet(
-        colors: _values(items.map((item) => item.color)),
-        occasions: _values(items.expand((item) => item.occasions)),
-        seasons: _values(items.expand((item) => item.seasons)),
+        colors: _values(
+          items.expand((item) => [item.primaryColor, item.secondaryColor]),
+        ),
+        occasions: _values(items.expand((item) => item.occasionValues)),
+        seasons: _values(items.expand((item) => item.seasonValues)),
         initialColors: _colors,
         initialOccasions: _occasions,
         initialSeasons: _seasons,
@@ -312,6 +351,56 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
           .read(wardrobeRepositoryProvider)
           .setArchived(item.localId, !item.isArchived),
     );
+  }
+
+  Future<void> _retryPendingUploads() async {
+    final userId = ref.read(authGatewayProvider)?.currentSession?.userId;
+    if (userId == null) {
+      context.push('/account/sign-in');
+      return;
+    }
+    try {
+      final result = await ref
+          .read(wardrobeSyncServiceProvider)
+          .syncPending(userId);
+      if (!mounted) return;
+      ref.invalidate(wardrobeItemsProvider);
+      final message = result.failed == 0
+          ? 'Synced ${result.synced} wardrobe items.'
+          : '${result.failed} items remain queued. Check your connection and '
+                'retry.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } on Exception catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_loadErrorMessage(error))));
+    }
+  }
+
+  Future<void> _syncPendingAfterSignIn(String userId) async {
+    try {
+      final result = await ref
+          .read(wardrobeSyncServiceProvider)
+          .syncPending(userId);
+      if (!mounted) return;
+      ref.invalidate(wardrobeItemsProvider);
+      if (result.failed == 0) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result.failed} wardrobe items remain queued. Retry when online.',
+          ),
+        ),
+      );
+    } on Exception catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_loadErrorMessage(error))));
+    }
   }
 
   Future<void> _updateItem(Future<void> Function() update) async {
@@ -655,12 +744,14 @@ class _EmptyGallery extends StatelessWidget {
     required this.hasActiveFilters,
     required this.mode,
     required this.onClear,
+    required this.onAdd,
   });
 
   final bool hasItems;
   final bool hasActiveFilters;
   final _CollectionMode mode;
   final VoidCallback onClear;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -708,6 +799,53 @@ class _EmptyGallery extends StatelessWidget {
                 child: const Text('Clear search and filters'),
               ),
             ],
+            if (hasNoInventory) ...[
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_a_photo_outlined),
+                label: const Text('Add an item'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingSyncBanner extends StatelessWidget {
+  const _PendingSyncBanner({
+    required this.count,
+    required this.signedIn,
+    required this.onRetry,
+  });
+
+  final int count;
+  final bool signedIn;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      color: colors.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.cloud_upload_outlined, color: colors.onSecondaryContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '$count ${count == 1 ? 'item is' : 'items are'} waiting to '
+                '${signedIn ? 'sync' : 'sync after sign-in'}.',
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: Text(signedIn ? 'Retry' : 'Sign in'),
+            ),
           ],
         ),
       ),
@@ -921,7 +1059,8 @@ List<String> _values(Iterable<String?> values) {
 
 String _itemSubtitle(GuestWardrobeItem item) {
   final details = [
-    item.color,
+    item.primaryColor,
+    item.secondaryColor,
     item.brand,
   ].whereType<String>().where((value) => value.trim().isNotEmpty).toList();
   return details.isEmpty ? item.category : details.join(' · ');

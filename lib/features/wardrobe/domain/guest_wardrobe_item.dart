@@ -4,66 +4,118 @@ import 'package:flutter/foundation.dart';
 class GuestWardrobeItem {
   const GuestWardrobeItem({
     required this.localId,
-    required this.name,
+    String? title,
+    String? name,
     required this.category,
     required this.createdAt,
-    this.color,
+    this.subcategory,
+    String? primaryColor,
+    String? color,
+    this.secondaryColor,
     this.brand,
     this.size,
+    this.notes,
     this.localImagePath,
     this.imageContentType,
+    this.occasion,
     this.occasions = const [],
+    this.season,
     this.seasons = const [],
+    this.styleTags = const [],
     this.isFavorite = false,
     this.isArchived = false,
-  });
+    this.needsCloudSync = false,
+    this.cloudSyncError,
+  }) : title = title ?? name ?? '',
+       primaryColor = primaryColor ?? color;
 
   final String localId;
-  final String name;
+  final String title;
+  String get name => title;
   final String category;
+  final String? subcategory;
   final DateTime createdAt;
-  final String? color;
+  final String? primaryColor;
+  String? get color => primaryColor;
+  final String? secondaryColor;
   final String? brand;
   final String? size;
+  final String? notes;
   final String? localImagePath;
   final String? imageContentType;
+  final String? occasion;
   final List<String> occasions;
+  final String? season;
   final List<String> seasons;
+  final List<String> styleTags;
   final bool isFavorite;
   final bool isArchived;
+  final bool needsCloudSync;
+  final String? cloudSyncError;
 
-  GuestWardrobeItem copyWith({bool? isFavorite, bool? isArchived}) {
+  List<String> get occasionValues => _valuesFor(occasion, occasions);
+  List<String> get seasonValues => _valuesFor(season, seasons);
+
+  GuestWardrobeItem copyWith({
+    String? localImagePath,
+    String? imageContentType,
+    bool? isFavorite,
+    bool? isArchived,
+    bool? needsCloudSync,
+    String? cloudSyncError,
+    bool clearCloudSyncError = false,
+  }) {
     return GuestWardrobeItem(
       localId: localId,
-      name: name,
+      title: title,
       category: category,
+      subcategory: subcategory,
       createdAt: createdAt,
-      color: color,
+      primaryColor: primaryColor,
+      secondaryColor: secondaryColor,
       brand: brand,
       size: size,
-      localImagePath: localImagePath,
-      imageContentType: imageContentType,
+      notes: notes,
+      localImagePath: localImagePath ?? this.localImagePath,
+      imageContentType: imageContentType ?? this.imageContentType,
+      occasion: occasion,
       occasions: occasions,
+      season: season,
       seasons: seasons,
+      styleTags: styleTags,
       isFavorite: isFavorite ?? this.isFavorite,
       isArchived: isArchived ?? this.isArchived,
+      needsCloudSync: needsCloudSync ?? this.needsCloudSync,
+      cloudSyncError: clearCloudSyncError
+          ? null
+          : cloudSyncError ?? this.cloudSyncError,
     );
   }
 
   Map<String, Object?> toJson() => {
     'localId': localId,
-    'name': name,
+    'title': title,
+    'name': title,
     'category': category,
+    'subcategory': subcategory,
     'createdAt': createdAt.toUtc().toIso8601String(),
-    'color': color,
+    'primaryColor': primaryColor,
+    'color': primaryColor,
+    'secondaryColor': secondaryColor,
     'brand': brand,
     'size': size,
+    'notes': notes,
     'localImagePath': localImagePath,
     'imageContentType': imageContentType,
+    'occasion': occasion,
     'occasions': occasions,
+    'season': season,
     'seasons': seasons,
+    'styleTags': styleTags,
     'isFavorite': isFavorite,
     'isArchived': isArchived,
+    'needsCloudSync': needsCloudSync,
+    'cloudSyncError': cloudSyncError,
   };
 
   factory GuestWardrobeItem.fromJson(Map<String, Object?> json) {
@@ -77,19 +129,37 @@ class GuestWardrobeItem {
 
     return GuestWardrobeItem(
       localId: _requiredString(json, 'localId'),
-      name: _requiredString(json, 'name'),
+      title: json['title'] is String
+          ? _requiredString(json, 'title')
+          : _requiredString(json, 'name'),
       category: _requiredString(json, 'category'),
+      subcategory: _optionalString(json, 'subcategory'),
       createdAt: createdAt,
-      color: _optionalString(json, 'color'),
+      primaryColor:
+          _optionalString(json, 'primaryColor') ?? _optionalString(json, 'color'),
+      secondaryColor: _optionalString(json, 'secondaryColor'),
       brand: _optionalString(json, 'brand'),
       size: _optionalString(json, 'size'),
+      notes: _optionalString(json, 'notes'),
       localImagePath: _optionalString(json, 'localImagePath'),
       imageContentType: _optionalString(json, 'imageContentType'),
+      occasion: _optionalString(json, 'occasion'),
       occasions: _stringList(json, 'occasions'),
+      season: _optionalString(json, 'season'),
       seasons: _stringList(json, 'seasons'),
+      styleTags: _stringList(json, 'styleTags'),
       isFavorite: _optionalBool(json, 'isFavorite'),
       isArchived: _optionalBool(json, 'isArchived'),
+      needsCloudSync: _optionalBool(json, 'needsCloudSync'),
+      cloudSyncError: _optionalString(json, 'cloudSyncError'),
     );
+  }
+
+  static List<String> _valuesFor(String? primary, List<String> legacyValues) {
+    final values = <String>{};
+    if (primary != null && primary.trim().isNotEmpty) values.add(primary);
+    values.addAll(legacyValues.where((value) => value.trim().isNotEmpty));
+    return List<String>.unmodifiable(values);
   }
 
   static String _requiredString(Map<String, Object?> json, String key) {

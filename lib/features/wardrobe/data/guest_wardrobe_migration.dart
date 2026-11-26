@@ -6,10 +6,6 @@ import 'guest_wardrobe_contracts.dart';
 import 'local_wardrobe_repository.dart';
 import 'supabase_wardrobe_cloud_store.dart';
 
-final guestWardrobeCloudStoreProvider = Provider<GuestWardrobeCloudStore>(
-  (ref) => SupabaseWardrobeCloudStore(),
-);
-
 final guestWardrobeMigratorProvider = Provider<GuestWardrobeMigrator>((ref) {
   return GuestWardrobeMigrator(
     source: ref.watch(guestWardrobeSourceProvider),

@@ -32,14 +32,24 @@ outfits, outfit-item links, outfit plans, user preferences, and the private
    supabase db push
    ```
 
-   The migration is
-   `supabase/migrations/202611260001_wardrobe_sync.sql`. Alternatively, paste
-   that file into the Supabase SQL Editor and run it once instead. Choose one
-   method; the CLI does not automatically record migrations run manually in
-   the SQL Editor. Reconcile migration history before switching methods. If a run
-   fails because a relation or policy already exists, stop and inspect the
-   database before retrying; do not drop existing tables, rows, or policies to
-   make the migration pass.
+   The migrations create the base schema and add the current wardrobe item
+   fields:
+
+   - `202611260001_wardrobe_sync.sql` creates the owner-scoped tables and
+     private image bucket. It is safe to rerun against the documented existing
+     `wardrobe_items` schema.
+   - `20261126110800_wardrobe_item_fields.sql` adds title, subcategory, primary
+     and secondary colors, style tags, occasion, season, notes, favorite, and
+     archive fields. It backfills title/color from the existing name/color
+     columns.
+
+   If the base migration has already been applied, run only the new migration.
+   Alternatively, paste the required migration files into the Supabase SQL
+   Editor in timestamp order. Choose one method; the CLI does not automatically
+   record migrations run manually in the SQL Editor. Reconcile migration history
+   before switching methods. If a run fails because a relation or policy
+   already exists, stop and inspect the database before retrying; do not drop
+   existing tables, rows, or policies to make the migration pass.
 
 4. In Supabase Authentication settings, configure the site URL and redirect
    allowlist for the app. The default password-reset redirect is
@@ -84,7 +94,7 @@ so their linked outfit/wardrobe rows must belong to the same owner.
 | Table | Purpose |
 | --- | --- |
 | `profiles` | Auth-user profile (`id` is the auth user UUID) |
-| `wardrobe_items` | Typed clothing metadata and optional Storage object path |
+| `wardrobe_items` | Title, category/subcategory, colors, style tags, occasion, season, optional brand/notes, favorite/archive flags, and optional Storage object path |
 | `outfits` | Named outfit metadata |
 | `outfit_items` | Ordered links between outfits and wardrobe items |
 | `outfit_plans` | Schedule an outfit for a timestamp |
@@ -93,8 +103,10 @@ so their linked outfit/wardrobe rows must belong to the same owner.
 Wardrobe sync upserts using `(user_id, local_id)`. Image object names use
 `<authenticated-user-uuid>/<encoded-local-id>/photo.<jpg|png|webp>` in the
 private `wardrobe-images` bucket. Images are limited to 10 MiB and JPEG, PNG,
-or WebP. Use authenticated Storage APIs or signed URLs to display them; public
-URLs are not available for a private bucket.
+or WebP. The Flutter editor currently stores compressed JPEGs no larger than
+3 MiB. Use authenticated Storage APIs or signed URLs to display them; public
+URLs are not available for a private bucket. Local item and photo data are
+saved before any network request; failed uploads remain queued for retry.
 
 ## 4. Verification checklist
 
@@ -153,6 +165,29 @@ order by policyname;
 
 Expect select, insert, update, and delete policies, each scoped to the first
 object-path folder matching `auth.uid()`.
+
+Confirm the additive wardrobe fields are present and non-null defaults are set:
+
+```sql
+select column_name, data_type, is_nullable, column_default
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'wardrobe_items'
+  and column_name in (
+    'title',
+    'subcategory',
+    'primary_color',
+    'secondary_color',
+    'style_tags',
+    'occasion',
+    'season',
+    'notes',
+    'is_favorite',
+    'is_archived',
+    'updated_at'
+  )
+order by column_name;
+```
 
 ### Authenticated owner-isolation checks
 

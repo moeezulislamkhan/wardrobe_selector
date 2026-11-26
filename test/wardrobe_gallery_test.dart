@@ -5,11 +5,18 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wardrobe_recommender_app/app/app.dart';
+import 'package:wardrobe_recommender_app/core/errors/app_error.dart';
 import 'package:wardrobe_recommender_app/core/preferences/preferences_provider.dart';
-import 'package:wardrobe_recommender_app/features/wardrobe/data/local_wardrobe_repository.dart';
 import 'package:wardrobe_recommender_app/features/wardrobe/data/guest_wardrobe_contracts.dart';
+import 'package:wardrobe_recommender_app/features/wardrobe/data/local_wardrobe_repository.dart';
+import 'package:wardrobe_recommender_app/features/wardrobe/data/wardrobe_image_picker.dart';
+import 'package:wardrobe_recommender_app/features/wardrobe/data/wardrobe_image_processor.dart';
+import 'package:wardrobe_recommender_app/features/wardrobe/data/wardrobe_photo_storage.dart';
+import 'package:wardrobe_recommender_app/features/wardrobe/data/wardrobe_sync_service.dart';
 import 'package:wardrobe_recommender_app/features/wardrobe/domain/guest_wardrobe_item.dart';
 
 void main() {
@@ -38,6 +45,40 @@ void main() {
     final preferences = await SharedPreferences.getInstance();
     final repository = LocalWardrobeRepository(preferences);
 
+    expect(await repository.loadItems(), isEmpty);
+  });
+
+  test(
+    'image processor outputs bounded JPEG data and rejects invalid input',
+    () async {
+      final compressed = await const WardrobeImageProcessor().compress(
+        _tinyPng(),
+      );
+
+      expect(img.decodeImage(compressed), isNotNull);
+      expect(
+        compressed.length,
+        lessThanOrEqualTo(WardrobeImageProcessor.maxOutputBytes),
+      );
+      await expectLater(
+        const WardrobeImageProcessor().compress(Uint8List.fromList([0, 1, 2])),
+        throwsA(isA<AppError>()),
+      );
+    },
+  );
+
+  test('failed private photo save does not create a local record', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final repository = LocalWardrobeRepository(
+      preferences,
+      photoStorage: _MemoryPhotoStorage(failSave: true),
+    );
+
+    await expectLater(
+      repository.createItem(blouse, Uint8List.fromList([1, 2, 3])),
+      throwsA(isA<AppError>()),
+    );
     expect(await repository.loadItems(), isEmpty);
   });
 
@@ -73,6 +114,68 @@ void main() {
       expect(result, bytes);
     },
   );
+
+  test('offline cloud failure keeps the local item queued for retry', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final photoStorage = _MemoryPhotoStorage();
+    final repository = LocalWardrobeRepository(
+      preferences,
+      photoStorage: photoStorage,
+    );
+    final item = GuestWardrobeItem(
+      localId: 'item-rain-jacket',
+      title: 'Rain jacket',
+      category: 'Outerwear',
+      subcategory: 'Rainwear',
+      createdAt: DateTime.utc(2025, 6, 12),
+      primaryColor: 'Green',
+      secondaryColor: 'Black',
+      styleTags: const ['Minimal', 'Waterproof'],
+      occasion: 'Travel',
+      season: 'Winter',
+      notes: 'Lightweight shell',
+      isFavorite: true,
+    );
+    final savedItem = await repository.createItem(item, _tinyPng());
+    final cloudStore = _FakeCloudStore(failUpload: true);
+    final syncService = WardrobeSyncService(
+      repository: repository,
+      cloudStore: cloudStore,
+    );
+
+    await expectLater(
+      syncService.syncItem('user-1', savedItem.localId),
+      throwsA(isA<AppError>()),
+    );
+    final queued = (await repository.loadItems()).single;
+    expect(queued.needsCloudSync, isTrue);
+    expect(queued.cloudSyncError, contains('offline'));
+    expect(queued.styleTags, item.styleTags);
+    expect(queued.occasionValues, ['Travel']);
+    expect(
+      await repository.readImage(queued.localImagePath!),
+      photoStorage.images[savedItem.localId],
+    );
+
+    cloudStore.failUpload = false;
+    cloudStore.failMetadata = true;
+    await expectLater(
+      syncService.syncItem('user-1', savedItem.localId),
+      throwsA(isA<AppError>()),
+    );
+    final metadataQueued = (await repository.loadItems()).single;
+    expect(metadataQueued.needsCloudSync, isTrue);
+    expect(metadataQueued.cloudSyncError, contains('metadata'));
+
+    cloudStore.failMetadata = false;
+    await syncService.syncItem('user-1', savedItem.localId);
+    final synced = (await repository.loadItems()).single;
+    expect(synced.needsCloudSync, isFalse);
+    expect(synced.cloudSyncError, isNull);
+    expect(cloudStore.syncedItem?.title, item.title);
+    expect(cloudStore.syncedItem?.secondaryColor, item.secondaryColor);
+  });
 
   testWidgets('gallery filters real local records and opens item details', (
     tester,
@@ -208,6 +311,68 @@ void main() {
     expect(find.text('Your wardrobe is empty'), findsOneWidget);
     expect(find.textContaining('No sample inventory is shown'), findsOneWidget);
   });
+
+  testWidgets('camera/gallery import saves compressed item locally first', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final preferences = await _createPreferences();
+    final repository = _MemoryWardrobeRepository([]);
+    final picker = _MemoryImagePicker(_tinyPng());
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(preferences),
+          wardrobeRepositoryProvider.overrideWithValue(repository),
+          wardrobeImagePickerProvider.overrideWithValue(picker),
+          wardrobeImageProcessorProvider.overrideWithValue(
+            _FakeImageProcessor(),
+          ),
+        ],
+        child: const WardrobeApp(),
+      ),
+    );
+    await _openWardrobe(tester);
+    await tester.tap(find.text('Add an item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Gallery'));
+    await tester.pumpAndSettle();
+
+    await _enterVisibleField(tester, 'Title', 'Rain jacket');
+    await _enterVisibleField(tester, 'Category', 'Outerwear');
+    await _enterVisibleField(tester, 'Subcategory', 'Rainwear');
+    await _enterVisibleField(tester, 'Primary color', 'Green');
+    await _enterVisibleField(tester, 'Style tags', 'Minimal, Waterproof');
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Save item'),
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Save item'));
+    await tester.pumpAndSettle();
+
+    expect(picker.lastSource, ImageSource.gallery);
+    expect(repository.items.single.title, 'Rain jacket');
+    expect(repository.items.single.localImagePath, isNotNull);
+    expect(repository.items.single.needsCloudSync, isTrue);
+    expect(repository.items.single.subcategory, 'Rainwear');
+    expect(repository.items.single.primaryColor, 'Green');
+    expect(repository.items.single.styleTags, ['Minimal', 'Waterproof']);
+
+    await tester.scrollUntilVisible(
+      find.text('Done'),
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rain jacket'), findsOneWidget);
+  });
 }
 
 Future<SharedPreferences> _createPreferences() async {
@@ -225,10 +390,38 @@ Future<void> _openWardrobe(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _enterVisibleField(
+  WidgetTester tester,
+  String label,
+  String value,
+) async {
+  final field = find.byKey(ValueKey('wardrobe-field-$label'));
+  await tester.scrollUntilVisible(
+    field,
+    160,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.enterText(field, value);
+}
+
 class _MemoryWardrobeRepository implements WardrobeRepository {
   _MemoryWardrobeRepository(this.items);
 
   List<GuestWardrobeItem> items;
+
+  @override
+  Future<GuestWardrobeItem> createItem(
+    GuestWardrobeItem item,
+    Uint8List photoBytes,
+  ) async {
+    final saved = item.copyWith(
+      localImagePath: 'memory://${item.localId}',
+      imageContentType: 'image/jpeg',
+      needsCloudSync: true,
+    );
+    items = [...items, saved];
+    return saved;
+  }
 
   @override
   Future<List<GuestWardrobeItem>> loadItems() async => List.unmodifiable(items);
@@ -248,6 +441,22 @@ class _MemoryWardrobeRepository implements WardrobeRepository {
     _update(localId, (item) => item.copyWith(isArchived: isArchived));
   }
 
+  @override
+  Future<void> setCloudSyncState(
+    String localId, {
+    required bool pending,
+    String? error,
+  }) async {
+    _update(
+      localId,
+      (item) => item.copyWith(
+        needsCloudSync: pending,
+        cloudSyncError: error,
+        clearCloudSyncError: error == null,
+      ),
+    );
+  }
+
   void _update(
     String localId,
     GuestWardrobeItem Function(GuestWardrobeItem) update,
@@ -256,4 +465,86 @@ class _MemoryWardrobeRepository implements WardrobeRepository {
     if (index == -1) throw StateError('Test item not found.');
     items = [...items]..[index] = update(items[index]);
   }
+}
+
+Uint8List _tinyPng() {
+  final image = img.Image(width: 4, height: 4);
+  img.fill(image, color: img.ColorRgb8(160, 70, 90));
+  return Uint8List.fromList(img.encodePng(image));
+}
+
+class _MemoryPhotoStorage implements WardrobePhotoStorage {
+  _MemoryPhotoStorage({this.failSave = false});
+
+  final bool failSave;
+  final Map<String, Uint8List> images = {};
+
+  @override
+  Future<String> save(String localId, Uint8List bytes) async {
+    if (failSave) throw const AppError('Photo storage is unavailable.');
+    images[localId] = Uint8List.fromList(bytes);
+    return 'memory://$localId';
+  }
+
+  @override
+  Future<Uint8List> read(String path) async {
+    final localId = path.replaceFirst('memory://', '');
+    final bytes = images[localId];
+    if (bytes == null) throw const AppError('Photo is missing.');
+    return bytes;
+  }
+
+  @override
+  Future<void> delete(String path) async {
+    images.remove(path.replaceFirst('memory://', ''));
+  }
+}
+
+class _FakeCloudStore implements GuestWardrobeCloudStore {
+  _FakeCloudStore({this.failUpload = false});
+
+  bool failUpload;
+  bool failMetadata = false;
+  GuestWardrobeItem? syncedItem;
+  Uint8List? uploadedBytes;
+
+  @override
+  Future<String> uploadImage({
+    required String userId,
+    required String localId,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    if (failUpload) throw const AppError('offline');
+    uploadedBytes = bytes;
+    return '$userId/$localId/photo.jpg';
+  }
+
+  @override
+  Future<void> upsertItem({
+    required String userId,
+    required GuestWardrobeItem item,
+    required String? imagePath,
+  }) async {
+    if (failMetadata) throw const AppError('metadata sync failed');
+    syncedItem = item;
+  }
+}
+
+class _MemoryImagePicker implements WardrobeImagePicker {
+  _MemoryImagePicker(this.bytes);
+
+  final Uint8List bytes;
+  ImageSource? lastSource;
+
+  @override
+  Future<Uint8List?> pick(ImageSource source) async {
+    lastSource = source;
+    return bytes;
+  }
+}
+
+class _FakeImageProcessor extends WardrobeImageProcessor {
+  @override
+  Future<Uint8List> compress(Uint8List input) async => input;
 }

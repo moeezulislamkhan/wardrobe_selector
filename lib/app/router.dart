@@ -11,6 +11,7 @@ import '../features/onboarding/presentation/reset_password_screen.dart';
 import '../features/outfits/presentation/outfits_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_item_detail_screen.dart';
+import '../features/wardrobe/presentation/wardrobe_item_editor_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_screen.dart';
 import 'shell/navigation_shell.dart';
 
@@ -71,6 +72,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 name: 'wardrobe',
                 builder: (context, state) => const WardrobeScreen(),
                 routes: [
+                  GoRoute(
+                    path: 'add',
+                    name: 'wardrobe-item-add',
+                    builder: (context, state) =>
+                        const WardrobeItemEditorScreen(),
+                  ),
                   GoRoute(
                     path: 'items/:itemId',
                     name: 'wardrobe-item-detail',
