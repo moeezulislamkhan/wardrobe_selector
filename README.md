@@ -38,6 +38,16 @@ Manual outfits can be edited or duplicated and are saved locally with a pending
 sync flag. Cloud sync for manual outfit records is not yet available. No account
 is required for guest mode, and AI image recognition is not used.
 
+## Future AI boundary
+
+`WardrobeAiGateway` defines typed boundaries for clothing-image analysis,
+stylist conversations, and personalized advice. Its Riverpod provider defaults
+to unavailable, and no AI SDK, provider, or network implementation is included.
+Current recommendations continue to use the local rule-based engine and work
+without internet or an AI service. Any future network implementation must call
+a trusted backend such as a Supabase Edge Function; provider API secrets must
+remain server-side and must never be embedded in Flutter.
+
 ## Week planner
 
 The planner opens to the next complete Monday–Sunday week (so planning on
