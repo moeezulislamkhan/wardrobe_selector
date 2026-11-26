@@ -10,6 +10,7 @@ import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/onboarding/presentation/reset_password_screen.dart';
 import '../features/outfits/presentation/manual_outfit_editor_screen.dart';
 import '../features/outfits/presentation/outfits_screen.dart';
+import '../features/outfits/presentation/week_planner_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_item_detail_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_item_editor_screen.dart';
@@ -31,6 +32,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: 'planner',
+        name: 'week-planner',
+        builder: (context, state) => const WeekPlannerScreen(),
+      ),
       GoRoute(
         path: '/onboarding',
         name: 'onboarding',

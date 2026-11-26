@@ -1,9 +1,9 @@
 # Supabase setup
 
 Supabase is optional. Guest mode remains available when Supabase is not
-configured. The migration creates owner-scoped profiles, wardrobe items,
-outfits, outfit-item links, outfit plans, user preferences, and the private
-`wardrobe-images` bucket.
+configured. The checked-in migration adds owner-scoped outfit-plan history to
+an existing Supabase schema. The profile, wardrobe, outfit, preference, and
+private `wardrobe-images` base schema must already be present.
 
 ## 1. Create a project and apply the migration
 
@@ -17,39 +17,27 @@ outfits, outfit-item links, outfit plans, user preferences, and the private
    supabase login
    ```
 
-   The migration supports a pre-existing `wardrobe_items` table when it has
-   the app's UUID `id`, `user_id`, `local_id`, clothing metadata, `created_at`,
-   and `image_path` columns with non-null IDs. It preserves rows, adds missing
-   timestamps, owner foreign keys, and uniqueness constraints, and enforces
-   owner scope even when older policies already exist. Existing duplicate
-   `(user_id, local_id)` values must be resolved before applying. If another
-   table already exists with a different shape, stop and inspect it first.
-
-3. Link the project and apply checked-in migrations:
+3. This checkout includes the additive plan-history migration only. It expects
+   `outfit_plans`, `outfits`, `outfit_items`, and the
+   `outfit_items.wardrobe_item_snapshot` column to exist already. It does not
+   initialize a blank Supabase project. For a project with its base schema and
+   migration history configured, link the project and apply the unapplied
+   migration:
 
    ```shell
    supabase link --project-ref YOUR_PROJECT_REF
    supabase db push
    ```
 
-   The migrations create the base schema and add the current wardrobe item
-   fields:
+   The included `20261128120000_outfit_plan_history.sql` migration adds plan
+   statuses and immutable, owner-scoped date-history snapshots. On an existing
+   project whose schema was applied manually, paste this migration into the SQL
+   Editor instead; reconcile CLI migration history before switching back to
+   `supabase db push`.
 
-   - `202611260001_wardrobe_sync.sql` creates the owner-scoped tables and
-     private image bucket. It is safe to rerun against the documented existing
-     `wardrobe_items` schema.
-   - `20261126110800_wardrobe_item_fields.sql` adds title, subcategory, primary
-     and secondary colors, style tags, occasion, season, notes, favorite, and
-     archive fields. It backfills title/color from the existing name/color
-     columns.
-   - `20261127120000_wardrobe_history_snapshots.sql` stores a wardrobe-item
-     snapshot on each outfit link and changes the item foreign key to set only
-     `wardrobe_item_id` to null on deletion. Outfit links and their snapshots
-     therefore survive wardrobe-item deletion.
-
-   If earlier migrations have already been applied, run only the unapplied
-   migrations in order. Alternatively, paste the required migration files into
-   the Supabase SQL Editor in timestamp order. Choose one method; the CLI does not automatically
+   If earlier migrations have already been applied, run only unapplied
+   migrations in order. Alternatively, paste the required migration into the
+   Supabase SQL Editor. Choose one method; the CLI does not automatically
    record migrations run manually in the SQL Editor. Reconcile migration history
    before switching methods. If a run fails because a relation or policy
    already exists, stop and inspect the database before retrying; do not drop
@@ -92,8 +80,8 @@ privileged secrets in Flutter, `--dart-define`, web assets, or source control.
 
 Every application table has UUID identity, timestamps, indexes as appropriate,
 and row-level security enabled. The authenticated owner is enforced through
-`auth.uid()`. `outfit_items` and `outfit_plans` also use composite foreign keys
-so their linked outfit/wardrobe rows must belong to the same owner.
+`auth.uid()`. `outfit_items`, `outfit_plans`, and `outfit_plan_history` also use
+composite foreign keys so linked records must belong to the same owner.
 
 | Table | Purpose |
 | --- | --- |
@@ -102,6 +90,7 @@ so their linked outfit/wardrobe rows must belong to the same owner.
 | `outfits` | Named outfit metadata |
 | `outfit_items` | Ordered links between outfits and wardrobe items |
 | `outfit_plans` | Schedule an outfit for a timestamp |
+| `outfit_plan_history` | Owner-scoped status events with immutable item snapshots |
 | `user_preferences` | Per-user style preferences |
 
 Wardrobe sync upserts using `(user_id, local_id)`. Image object names use
@@ -120,7 +109,7 @@ without deleting the historical link or snapshot.
 
 ### Schema and policy inventory
 
-Run this in the Supabase SQL Editor to confirm all six tables have RLS enabled
+Run this in the Supabase SQL Editor to confirm all seven tables have RLS enabled
 and policies:
 
 ```sql
@@ -140,13 +129,16 @@ where n.nspname = 'public'
     'outfits',
     'outfit_items',
     'outfit_plans',
+    'outfit_plan_history',
     'user_preferences'
   )
 group by n.nspname, c.relname, c.relrowsecurity
 order by c.relname;
 ```
 
-Expect six rows, `rls_enabled = true`, and at least one owner policy per table.
+Expect seven rows, `rls_enabled = true`, and at least one owner policy per
+table. `outfit_plan_history` should have the
+`outfit_plan_history_owner_access` policy.
 An existing `wardrobe_items` table may retain its separate owner-scoped
 select/insert/update/delete policies in addition to the consolidated policy.
 Verify that every policy on that table is owner-scoped.
@@ -222,15 +214,29 @@ from public.outfit_items
 where wardrobe_item_snapshot is not null;
 ```
 
+Verify date-history rows contain snapshots and valid statuses:
+
+```sql
+select id, plan_id, planned_for, status, item_snapshot, recorded_at
+from public.outfit_plan_history
+order by planned_for desc, recorded_at desc
+limit 20;
+```
+
+Expect statuses to be `planned`, `worn`, `skipped`, or `modified`, and
+`item_snapshot` to be a JSON array. History is removed only when its associated
+plan is explicitly deleted; wardrobe-item edits or deletions do not rewrite it.
+
 ### Authenticated owner-isolation checks
 
 Use two test accounts, A and B, signed in through the app or Supabase client.
 Do not run owner-isolation tests as the SQL Editor's elevated database role:
 
 - With A signed in, create and read A's profile/preferences, wardrobe item,
-  outfit, outfit-item link, and outfit plan. Confirm the upsert
+  outfit, outfit-item link, outfit plan, and plan-history events. Confirm the upsert
   `(user_id, local_id)` works.
-- With B signed in, verify queries for A's rows return no rows, and attempts
+- With B signed in, verify queries for A's rows and plan-history events return
+  no rows, and attempts
   to update/delete A's rows or insert rows with A's `user_id` are denied or
   affect zero rows.
 - Verify B cannot link B's outfit to A's wardrobe item (and vice versa).

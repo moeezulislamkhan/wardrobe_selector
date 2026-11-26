@@ -129,14 +129,23 @@ class _OutfitsScreenState extends ConsumerState<OutfitsScreen> {
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            key: const ValueKey('create-manual-outfit'),
-            onPressed: _createManualOutfit,
-            icon: const Icon(Icons.add),
-            label: const Text('Create outfit'),
-          ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            FilledButton.icon(
+              key: const ValueKey('create-manual-outfit'),
+              onPressed: _createManualOutfit,
+              icon: const Icon(Icons.add),
+              label: const Text('Create outfit'),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('open-week-planner'),
+              onPressed: () => context.pushNamed('week-planner'),
+              icon: const Icon(Icons.calendar_month_outlined),
+              label: const Text('Plan my week'),
+            ),
+          ],
         ),
         if (_manualOutfitsError case final error?) ...[
           const SizedBox(height: 12),
