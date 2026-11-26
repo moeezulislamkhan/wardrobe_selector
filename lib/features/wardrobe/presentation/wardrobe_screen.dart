@@ -102,6 +102,7 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
     }
 
     final collection = items.where((item) {
+      if (item.isDeleted) return false;
       return switch (_mode) {
         _CollectionMode.active => !item.isArchived,
         _CollectionMode.favorites => !item.isArchived && item.isFavorite,
@@ -242,7 +243,7 @@ class _WardrobeScreenState extends ConsumerState<WardrobeScreen> {
           SliverFillRemaining(
             hasScrollBody: false,
             child: _EmptyGallery(
-              hasItems: items.isNotEmpty,
+              hasItems: items.any((item) => !item.isDeleted),
               hasActiveFilters: _hasActiveFilters,
               mode: _mode,
               onClear: _clearFilters,

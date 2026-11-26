@@ -118,6 +118,58 @@ class SupabaseWardrobeCloudStore implements GuestWardrobeCloudStore {
     }
   }
 
+  @override
+  Future<void> deleteItem({
+    required String userId,
+    required GuestWardrobeItem item,
+  }) async {
+    final client = _supabaseClient;
+    _requireCurrentUser(client, userId);
+
+    try {
+      final row = await client
+          .from('wardrobe_items')
+          .select('id, image_path')
+          .eq('user_id', userId)
+          .eq('local_id', item.localId)
+          .maybeSingle();
+      if (row == null) return;
+
+      final wardrobeItemId = row['id'] as String;
+      final imagePath = row['image_path'] as String?;
+      final outfitLinks = await client
+          .from('outfit_items')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('wardrobe_item_id', wardrobeItemId)
+          .limit(1);
+      if (imagePath != null && outfitLinks.isEmpty) {
+        await client.storage.from('wardrobe-images').remove([imagePath]);
+      }
+
+      await client
+          .from('wardrobe_items')
+          .delete()
+          .eq('user_id', userId)
+          .eq('local_id', item.localId);
+    } on PostgrestException catch (error) {
+      throw AppError(
+        'Could not delete the cloud item. Your local deletion is queued.',
+        cause: error,
+      );
+    } on StorageException catch (error) {
+      throw AppError(
+        'Could not remove the cloud photo. Your local deletion is queued.',
+        cause: error,
+      );
+    } on Exception catch (error) {
+      throw AppError(
+        'Cloud deletion failed. Check your connection and retry.',
+        cause: error,
+      );
+    }
+  }
+
   static void _requireCurrentUser(SupabaseClient client, String userId) {
     final isUuid = RegExp(
       r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',

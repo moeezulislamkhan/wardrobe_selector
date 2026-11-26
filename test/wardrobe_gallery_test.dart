@@ -95,7 +95,93 @@ void main() {
     final savedItems = await repository.loadItems();
     expect(savedItems.single.isFavorite, isTrue);
     expect(savedItems.single.isArchived, isTrue);
+    expect(savedItems.single.needsCloudSync, isTrue);
   });
+
+  test(
+    'local edits replace photo and queue metadata without losing the item',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final photoStorage = _MemoryPhotoStorage();
+      final repository = LocalWardrobeRepository(
+        preferences,
+        photoStorage: photoStorage,
+      );
+      final savedItem = await repository.createItem(blouse, _tinyPng());
+      await repository.setCloudSyncState(
+        savedItem.localId,
+        pending: false,
+        hasCloudCopy: true,
+      );
+      final editedItem = GuestWardrobeItem(
+        localId: savedItem.localId,
+        title: 'Updated linen blouse',
+        category: savedItem.category,
+        createdAt: savedItem.createdAt,
+        primaryColor: 'White',
+        localImagePath: savedItem.localImagePath,
+        imageContentType: savedItem.imageContentType,
+        isFavorite: true,
+        hasCloudCopy: true,
+      );
+
+      final updated = await repository.updateItem(
+        editedItem,
+        replacementPhotoBytes: _tinyPng(),
+      );
+
+      expect(updated.title, 'Updated linen blouse');
+      expect(updated.primaryColor, 'White');
+      expect(updated.needsCloudSync, isTrue);
+      expect(updated.hasCloudCopy, isTrue);
+      expect(updated.isFavorite, isTrue);
+      expect(updated.localImagePath, isNot(savedItem.localImagePath));
+      expect(photoStorage.images, hasLength(1));
+      expect(await repository.readImage(updated.localImagePath!), isNotEmpty);
+    },
+  );
+
+  test(
+    'offline deletion keeps a retryable tombstone until cloud succeeds',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final photoStorage = _MemoryPhotoStorage();
+      final repository = LocalWardrobeRepository(
+        preferences,
+        photoStorage: photoStorage,
+      );
+      final savedItem = await repository.createItem(blouse, _tinyPng());
+      final cloudStore = _FakeCloudStore(failDelete: true);
+      final syncService = WardrobeSyncService(
+        repository: repository,
+        cloudStore: cloudStore,
+      );
+
+      await repository.markDeleted(savedItem.localId);
+      final tombstone = (await repository.loadItems()).single;
+      expect(tombstone.isDeleted, isTrue);
+      expect(tombstone.needsCloudSync, isTrue);
+      expect(await repository.readImage(tombstone.localImagePath!), isNotEmpty);
+
+      await expectLater(
+        syncService.syncDeletedItem('user-1', savedItem.localId),
+        throwsA(isA<AppError>()),
+      );
+      final failedDelete = (await repository.loadItems()).single;
+      expect(failedDelete.isDeleted, isTrue);
+      expect(failedDelete.cloudSyncError, contains('deletion'));
+
+      cloudStore.failDelete = false;
+      final syncResult = await syncService.syncPending('user-1');
+      expect(syncResult.synced, 1);
+      expect(syncResult.failed, 0);
+      expect(await repository.loadItems(), isEmpty);
+      expect(cloudStore.deletedItems, [savedItem.localId]);
+      expect(photoStorage.images, isEmpty);
+    },
+  );
 
   test(
     'local repository reads cached photo bytes without network access',
@@ -315,7 +401,7 @@ void main() {
   testWidgets('camera/gallery import saves compressed item locally first', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(400, 1000);
+    tester.view.physicalSize = const Size(400, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -373,6 +459,58 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rain jacket'), findsOneWidget);
   });
+
+  testWidgets('item detail edits locally and confirms deletion', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final preferences = await _createPreferences();
+    final repository = _MemoryWardrobeRepository([blouse]);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(preferences),
+          wardrobeRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const WardrobeApp(),
+      ),
+    );
+    await _openWardrobe(tester);
+    await tester.tap(find.text('Linen blouse'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit item'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('wardrobe-field-Title')),
+      'Updated blouse',
+    );
+    await tester.scrollUntilVisible(
+      find.text('Save changes'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(repository.items.single.title, 'Updated blouse');
+    expect(find.text('Item details'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Delete item'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this item?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(repository.items.single.isDeleted, isFalse);
+
+    await tester.tap(find.byTooltip('Delete item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete').last);
+    await tester.pumpAndSettle();
+    expect(repository.items.single.isDeleted, isTrue);
+    expect(find.text('Updated blouse'), findsNothing);
+  });
 }
 
 Future<SharedPreferences> _createPreferences() async {
@@ -424,6 +562,24 @@ class _MemoryWardrobeRepository implements WardrobeRepository {
   }
 
   @override
+  Future<GuestWardrobeItem> updateItem(
+    GuestWardrobeItem item, {
+    Uint8List? replacementPhotoBytes,
+  }) async {
+    final saved = item.copyWith(
+      localImagePath: replacementPhotoBytes == null
+          ? item.localImagePath
+          : 'memory://${item.localId}',
+      imageContentType: 'image/jpeg',
+      needsCloudSync: true,
+    );
+    final index = items.indexWhere((value) => value.localId == item.localId);
+    if (index == -1) throw StateError('Test item not found.');
+    items = [...items]..[index] = saved;
+    return saved;
+  }
+
+  @override
   Future<List<GuestWardrobeItem>> loadItems() async => List.unmodifiable(items);
 
   @override
@@ -442,15 +598,27 @@ class _MemoryWardrobeRepository implements WardrobeRepository {
   }
 
   @override
+  Future<void> markDeleted(String localId) async {
+    _update(localId, (item) => item.copyWith(isDeleted: true));
+  }
+
+  @override
+  Future<void> finalizeDelete(String localId) async {
+    items = items.where((item) => item.localId != localId).toList();
+  }
+
+  @override
   Future<void> setCloudSyncState(
     String localId, {
     required bool pending,
     String? error,
+    bool? hasCloudCopy,
   }) async {
     _update(
       localId,
       (item) => item.copyWith(
         needsCloudSync: pending,
+        hasCloudCopy: hasCloudCopy,
         cloudSyncError: error,
         clearCloudSyncError: error == null,
       ),
@@ -501,12 +669,14 @@ class _MemoryPhotoStorage implements WardrobePhotoStorage {
 }
 
 class _FakeCloudStore implements GuestWardrobeCloudStore {
-  _FakeCloudStore({this.failUpload = false});
+  _FakeCloudStore({this.failUpload = false, this.failDelete = false});
 
   bool failUpload;
+  bool failDelete;
   bool failMetadata = false;
   GuestWardrobeItem? syncedItem;
   Uint8List? uploadedBytes;
+  final List<String> deletedItems = [];
 
   @override
   Future<String> uploadImage({
@@ -528,6 +698,15 @@ class _FakeCloudStore implements GuestWardrobeCloudStore {
   }) async {
     if (failMetadata) throw const AppError('metadata sync failed');
     syncedItem = item;
+  }
+
+  @override
+  Future<void> deleteItem({
+    required String userId,
+    required GuestWardrobeItem item,
+  }) async {
+    if (failDelete) throw const AppError('Cloud deletion failed.');
+    deletedItems.add(item.localId);
   }
 }
 

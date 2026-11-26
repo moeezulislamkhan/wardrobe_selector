@@ -439,6 +439,14 @@ class _FakeCloudStore implements GuestWardrobeCloudStore {
     }
     items['$userId:${item.localId}'] = item;
   }
+
+  @override
+  Future<void> deleteItem({
+    required String userId,
+    required GuestWardrobeItem item,
+  }) async {
+    items.remove('$userId:${item.localId}');
+  }
 }
 
 class _FakeAuthGateway implements AuthGateway {

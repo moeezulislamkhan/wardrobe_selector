@@ -17,8 +17,37 @@ class WardrobeItemDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final items = ref.watch(wardrobeItemsProvider);
+    final itemForActions = items.maybeWhen(
+      data: (allItems) => allItems
+          .where(
+            (candidate) =>
+                candidate.localId == itemId && !candidate.isDeleted,
+          )
+          .firstOrNull,
+      orElse: () => null,
+    );
     return Scaffold(
-      appBar: AppBar(title: const Text('Item details')),
+      appBar: AppBar(
+        title: const Text('Item details'),
+        actions: [
+          if (itemForActions != null) ...[
+            IconButton(
+              tooltip: 'Edit item',
+              onPressed: () => context.pushNamed(
+                'wardrobe-item-edit',
+                pathParameters: {'itemId': itemForActions.localId},
+              ),
+              icon: const Icon(Icons.edit_outlined),
+            ),
+            IconButton(
+              tooltip: 'Delete item',
+              onPressed: () =>
+                  _deleteWardrobeItem(context, ref, itemForActions),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ],
+      ),
       body: items.when(
         loading: () => const Center(
           child: CircularProgressIndicator(
@@ -32,7 +61,10 @@ class WardrobeItemDetailScreen extends ConsumerWidget {
         ),
         data: (allItems) {
           final item = allItems
-              .where((candidate) => candidate.localId == itemId)
+              .where(
+                (candidate) =>
+                    candidate.localId == itemId && !candidate.isDeleted,
+              )
               .firstOrNull;
           if (item == null) {
             return const _DetailMessage(
@@ -99,10 +131,8 @@ class _ItemDetails extends ConsumerWidget {
           'Added ${_formatDate(item.createdAt)}',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
-        if (item.needsCloudSync) ...[
-          const SizedBox(height: 16),
-          _CloudSyncStatus(item: item),
-        ],
+        const SizedBox(height: 16),
+        _CloudSyncStatus(item: item),
         const SizedBox(height: 20),
         OutlinedButton.icon(
           onPressed: () => _update(
@@ -119,19 +149,46 @@ class _ItemDetails extends ConsumerWidget {
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: () => _update(
-            context,
-            ref,
-            () => ref
-                .read(wardrobeRepositoryProvider)
-                .setArchived(item.localId, !item.isArchived),
-          ),
+          onPressed: () => _toggleArchive(context, ref),
           icon: Icon(
             item.isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
           ),
           label: Text(item.isArchived ? 'Restore item' : 'Archive item'),
         ),
       ],
+    );
+  }
+
+  Future<void> _toggleArchive(BuildContext context, WidgetRef ref) async {
+    if (!item.isArchived) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Archive this item?'),
+          content: const Text(
+            'You can restore it later. Existing outfit history will remain.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Archive'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      if (!context.mounted) return;
+    }
+    await _update(
+      context,
+      ref,
+      () => ref
+          .read(wardrobeRepositoryProvider)
+          .setArchived(item.localId, !item.isArchived),
     );
   }
 
@@ -148,10 +205,69 @@ class _ItemDetails extends ConsumerWidget {
       final message = error is AppError
           ? error.message
           : 'Could not save your wardrobe changes.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+}
+
+Future<void> _deleteWardrobeItem(
+  BuildContext context,
+  WidgetRef ref,
+  GuestWardrobeItem item,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Delete this item?'),
+      content: const Text(
+        'The item will be removed from your wardrobe. Outfit history keeps '
+        'its saved item snapshot.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await ref.read(wardrobeRepositoryProvider).markDeleted(item.localId);
+    ref.invalidate(wardrobeItemsProvider);
+    final userId = ref.read(authGatewayProvider)?.currentSession?.userId;
+    var message = 'Item deleted from this device.';
+    if (userId == null) {
+      message += ' Cloud deletion will sync after you sign in.';
+    } else {
+      try {
+        await ref
+            .read(wardrobeSyncServiceProvider)
+            .syncDeletedItem(userId, item.localId);
+        message = 'Item deleted.';
+      } on Exception catch (error) {
+        final detail = error is AppError
+            ? error.message
+            : 'Cloud deletion remains queued for retry.';
+        message = 'Item deleted locally. $detail';
+      }
+    }
+    if (!context.mounted) return;
+    context.pop();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  } on Exception catch (error) {
+    if (!context.mounted) return;
+    final message = error is AppError
+        ? error.message
+        : 'The item could not be deleted.';
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -164,33 +280,50 @@ class _CloudSyncStatus extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(authSessionProvider);
     final userId = ref.read(authGatewayProvider)?.currentSession?.userId;
+    final title = item.needsCloudSync
+        ? item.hasCloudCopy
+              ? 'Cloud sync pending'
+              : 'Upload pending'
+        : item.hasCloudCopy
+        ? 'Synced to your account'
+        : 'Local copy only';
+    final status = item.needsCloudSync
+        ? item.hasCloudCopy
+              ? 'Changes are waiting to sync to your account.'
+              : 'This item is saved locally and waiting to upload.'
+        : item.hasCloudCopy
+        ? 'This item is synced to your account.'
+        : 'This item is saved on this device only.';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
+            Row(
               children: [
-                Icon(Icons.cloud_upload_outlined),
-                SizedBox(width: 8),
-                Text('Cloud sync pending'),
+                const Icon(Icons.cloud_upload_outlined),
+                const SizedBox(width: 8),
+                Text(title),
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              item.cloudSyncError ??
-                  (userId == null
-                      ? 'This item is saved locally. Sign in to upload it.'
-                      : 'This item is saved locally and waiting to upload.'),
-            ),
-            const SizedBox(height: 8),
-            FilledButton.tonal(
-              onPressed: userId == null
-                  ? () => context.push('/account/sign-in')
-                  : () => _retry(context, ref, userId),
-              child: Text(userId == null ? 'Sign in to sync' : 'Retry upload'),
-            ),
+            Text(item.cloudSyncError ?? status),
+            if (item.needsCloudSync || !item.hasCloudCopy) ...[
+              const SizedBox(height: 8),
+              FilledButton.tonal(
+                onPressed: userId == null
+                    ? () => context.push('/account/sign-in')
+                    : () => _retry(context, ref, userId),
+                child: Text(
+                  userId == null
+                      ? 'Sign in to sync'
+                      : item.hasCloudCopy
+                      ? 'Retry sync'
+                      : 'Upload to account',
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -213,9 +346,8 @@ class _CloudSyncStatus extends ConsumerWidget {
       final message = error is AppError
           ? error.message
           : 'Cloud upload failed. Retry when you are online.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }

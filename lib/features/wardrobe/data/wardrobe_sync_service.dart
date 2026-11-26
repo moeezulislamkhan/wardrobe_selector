@@ -39,6 +39,9 @@ class WardrobeSyncService {
     if (item == null) {
       throw const AppError('This wardrobe item is no longer available.');
     }
+    if (item.isDeleted) {
+      throw const AppError('This wardrobe item is queued for deletion.');
+    }
     final localImagePath = item.localImagePath;
     final contentType = item.imageContentType;
     if (localImagePath == null ||
@@ -65,7 +68,11 @@ class WardrobeSyncService {
         item: item,
         imagePath: remoteImagePath,
       );
-      await repository.setCloudSyncState(localId, pending: false);
+      await repository.setCloudSyncState(
+        localId,
+        pending: false,
+        hasCloudCopy: true,
+      );
     } on Exception catch (error) {
       final message = error is AppError
           ? error.message
@@ -87,6 +94,42 @@ class WardrobeSyncService {
     }
   }
 
+  Future<void> syncDeletedItem(String userId, String localId) async {
+    if (userId.trim().isEmpty) {
+      throw const AppError('Sign in before syncing this deletion.');
+    }
+    final items = await repository.loadItems();
+    final item = items.where((value) => value.localId == localId).firstOrNull;
+    if (item == null) return;
+    if (!item.isDeleted) {
+      throw const AppError('This wardrobe item is not queued for deletion.');
+    }
+
+    await repository.setCloudSyncState(localId, pending: true);
+    try {
+      await cloudStore.deleteItem(userId: userId, item: item);
+      await repository.finalizeDelete(localId);
+    } on Exception catch (error) {
+      final message = error is AppError
+          ? error.message
+          : 'Cloud deletion failed. The item is hidden locally; retry online.';
+      try {
+        await repository.setCloudSyncState(
+          localId,
+          pending: true,
+          error: message,
+        );
+      } on Exception catch (saveError) {
+        throw AppError(
+          'Cloud deletion failed and its retry status could not be saved.',
+          cause: saveError,
+        );
+      }
+      if (error is AppError) rethrow;
+      throw AppError(message, cause: error);
+    }
+  }
+
   Future<WardrobeSyncResult> syncPending(String userId) async {
     final pendingItems = (await repository.loadItems())
         .where((item) => item.needsCloudSync)
@@ -95,7 +138,11 @@ class WardrobeSyncService {
     var failed = 0;
     for (final GuestWardrobeItem item in pendingItems) {
       try {
-        await syncItem(userId, item.localId);
+        if (item.isDeleted) {
+          await syncDeletedItem(userId, item.localId);
+        } else {
+          await syncItem(userId, item.localId);
+        }
         synced++;
       } on Exception {
         failed++;

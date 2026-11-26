@@ -15,9 +15,7 @@ const _wardrobeItemsKey = 'wardrobe_items_v1';
 const _maxPhotoBytes = 3 * 1024 * 1024;
 
 final localWardrobeRepositoryProvider = Provider<LocalWardrobeRepository>(
-  (ref) => LocalWardrobeRepository(
-    ref.watch(sharedPreferencesProvider),
-  ),
+  (ref) => LocalWardrobeRepository(ref.watch(sharedPreferencesProvider)),
 );
 
 final wardrobeRepositoryProvider = Provider<WardrobeRepository>(
@@ -40,8 +38,7 @@ class LocalWardrobeRepository implements WardrobeRepository {
   LocalWardrobeRepository(
     this._preferences, {
     WardrobePhotoStorage? photoStorage,
-  }) : _photoStorage =
-           photoStorage ?? createLocalPhotoStorage(_preferences);
+  }) : _photoStorage = photoStorage ?? createLocalPhotoStorage(_preferences);
 
   final SharedPreferences _preferences;
   final WardrobePhotoStorage _photoStorage;
@@ -125,10 +122,86 @@ class LocalWardrobeRepository implements WardrobeRepository {
   }
 
   @override
+  Future<GuestWardrobeItem> updateItem(
+    GuestWardrobeItem item, {
+    Uint8List? replacementPhotoBytes,
+  }) async {
+    final items = await loadItems();
+    final index = items.indexWhere(
+      (savedItem) => savedItem.localId == item.localId,
+    );
+    if (index == -1 || items[index].isDeleted) {
+      throw const AppError('This wardrobe item is no longer available.');
+    }
+    if (item.title.trim().isEmpty || item.category.trim().isEmpty) {
+      throw const AppError('Add a title and category before saving.');
+    }
+    if (replacementPhotoBytes != null &&
+        (replacementPhotoBytes.isEmpty ||
+            replacementPhotoBytes.length > _maxPhotoBytes)) {
+      throw const AppError('Choose a compressed photo no larger than 3 MB.');
+    }
+
+    final currentItem = items[index];
+    String? replacementPath;
+    if (replacementPhotoBytes != null) {
+      final fileId = '${item.localId}-${DateTime.now().microsecondsSinceEpoch}';
+      replacementPath = await _photoStorage.save(fileId, replacementPhotoBytes);
+    }
+    final updatedItem = item.copyWith(
+      localImagePath: replacementPath ?? currentItem.localImagePath,
+      imageContentType: replacementPhotoBytes == null
+          ? currentItem.imageContentType
+          : 'image/jpeg',
+      isDeleted: false,
+      needsCloudSync: true,
+      hasCloudCopy: currentItem.hasCloudCopy,
+      clearCloudSyncError: true,
+    );
+    final updatedItems = [...items]..[index] = updatedItem;
+    try {
+      await _saveItems(updatedItems);
+    } on Exception {
+      if (replacementPath != null) {
+        try {
+          await _photoStorage.delete(replacementPath);
+        } on Exception catch (cleanupError) {
+          throw AppError(
+            'The edit was not saved and its temporary photo could not be '
+            'removed.',
+            cause: cleanupError,
+          );
+        }
+      }
+      rethrow;
+    }
+
+    final oldPhotoPath = currentItem.localImagePath;
+    if (replacementPath != null &&
+        oldPhotoPath != null &&
+        oldPhotoPath != replacementPath) {
+      try {
+        await _photoStorage.delete(oldPhotoPath);
+      } on Exception catch (error) {
+        throw AppError(
+          'Changes were saved locally, but the replaced photo could not be '
+          'removed.',
+          cause: error,
+        );
+      }
+    }
+    return updatedItem;
+  }
+
+  @override
   Future<void> setFavorite(String localId, bool isFavorite) {
     return _updateItem(
       localId,
-      (item) => item.copyWith(isFavorite: isFavorite),
+      (item) => item.copyWith(
+        isFavorite: isFavorite,
+        needsCloudSync: true,
+        clearCloudSyncError: true,
+      ),
     );
   }
 
@@ -136,8 +209,36 @@ class LocalWardrobeRepository implements WardrobeRepository {
   Future<void> setArchived(String localId, bool isArchived) {
     return _updateItem(
       localId,
-      (item) => item.copyWith(isArchived: isArchived),
+      (item) => item.copyWith(
+        isArchived: isArchived,
+        needsCloudSync: true,
+        clearCloudSyncError: true,
+      ),
     );
+  }
+
+  @override
+  Future<void> markDeleted(String localId) {
+    return _updateItem(
+      localId,
+      (item) => item.copyWith(
+        isDeleted: true,
+        needsCloudSync: true,
+        clearCloudSyncError: true,
+      ),
+    );
+  }
+
+  @override
+  Future<void> finalizeDelete(String localId) async {
+    final items = await loadItems();
+    final index = items.indexWhere((item) => item.localId == localId);
+    if (index == -1) return;
+
+    final photoPath = items[index].localImagePath;
+    if (photoPath != null) await _photoStorage.delete(photoPath);
+    final updatedItems = [...items]..removeAt(index);
+    await _saveItems(updatedItems);
   }
 
   @override
@@ -145,11 +246,13 @@ class LocalWardrobeRepository implements WardrobeRepository {
     String localId, {
     required bool pending,
     String? error,
+    bool? hasCloudCopy,
   }) {
     return _updateItem(
       localId,
       (item) => item.copyWith(
         needsCloudSync: pending,
+        hasCloudCopy: hasCloudCopy,
         cloudSyncError: error,
         clearCloudSyncError: error == null,
       ),

@@ -84,6 +84,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                     builder: (context, state) => WardrobeItemDetailScreen(
                       itemId: state.pathParameters['itemId']!,
                     ),
+                    routes: [
+                      GoRoute(
+                        path: 'edit',
+                        name: 'wardrobe-item-edit',
+                        builder: (context, state) =>
+                            WardrobeItemEditorScreen(
+                              itemId: state.pathParameters['itemId']!,
+                            ),
+                      ),
+                    ],
                   ),
                 ],
               ),

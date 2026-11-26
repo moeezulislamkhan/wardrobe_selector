@@ -15,14 +15,24 @@ abstract interface class WardrobeRepository implements GuestWardrobeSource {
     Uint8List photoBytes,
   );
 
+  Future<GuestWardrobeItem> updateItem(
+    GuestWardrobeItem item, {
+    Uint8List? replacementPhotoBytes,
+  });
+
   Future<void> setFavorite(String localId, bool isFavorite);
 
   Future<void> setArchived(String localId, bool isArchived);
+
+  Future<void> markDeleted(String localId);
+
+  Future<void> finalizeDelete(String localId);
 
   Future<void> setCloudSyncState(
     String localId, {
     required bool pending,
     String? error,
+    bool? hasCloudCopy,
   });
 }
 
@@ -50,5 +60,10 @@ abstract interface class GuestWardrobeCloudStore {
     required String userId,
     required GuestWardrobeItem item,
     required String? imagePath,
+  });
+
+  Future<void> deleteItem({
+    required String userId,
+    required GuestWardrobeItem item,
   });
 }

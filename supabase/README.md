@@ -19,11 +19,11 @@ outfits, outfit-item links, outfit plans, user preferences, and the private
 
    The migration supports a pre-existing `wardrobe_items` table when it has
    the app's UUID `id`, `user_id`, `local_id`, clothing metadata, `created_at`,
-   and `image_path` columns, plus a unique `(user_id, local_id)` constraint.
-   It preserves existing rows and owner policies, adds `updated_at` if needed,
-   and guards policy/trigger creation against duplicate names. If another
-   table already exists with a different shape, stop and inspect it before
-   applying the migration.
+   and `image_path` columns with non-null IDs. It preserves rows, adds missing
+   timestamps, owner foreign keys, and uniqueness constraints, and enforces
+   owner scope even when older policies already exist. Existing duplicate
+   `(user_id, local_id)` values must be resolved before applying. If another
+   table already exists with a different shape, stop and inspect it first.
 
 3. Link the project and apply checked-in migrations:
 
@@ -42,10 +42,14 @@ outfits, outfit-item links, outfit plans, user preferences, and the private
      and secondary colors, style tags, occasion, season, notes, favorite, and
      archive fields. It backfills title/color from the existing name/color
      columns.
+   - `20261127120000_wardrobe_history_snapshots.sql` stores a wardrobe-item
+     snapshot on each outfit link and changes the item foreign key to set only
+     `wardrobe_item_id` to null on deletion. Outfit links and their snapshots
+     therefore survive wardrobe-item deletion.
 
-   If the base migration has already been applied, run only the new migration.
-   Alternatively, paste the required migration files into the Supabase SQL
-   Editor in timestamp order. Choose one method; the CLI does not automatically
+   If earlier migrations have already been applied, run only the unapplied
+   migrations in order. Alternatively, paste the required migration files into
+   the Supabase SQL Editor in timestamp order. Choose one method; the CLI does not automatically
    record migrations run manually in the SQL Editor. Reconcile migration history
    before switching methods. If a run fails because a relation or policy
    already exists, stop and inspect the database before retrying; do not drop
@@ -107,6 +111,10 @@ or WebP. The Flutter editor currently stores compressed JPEGs no larger than
 3 MiB. Use authenticated Storage APIs or signed URLs to display them; public
 URLs are not available for a private bucket. Local item and photo data are
 saved before any network request; failed uploads remain queued for retry.
+Deleting a cloud item removes its Storage image only when no outfit link refers
+to it. Outfit-item snapshots include the item metadata and image path as it was
+when the link was created; deleting the item nulls the live foreign-key field
+without deleting the historical link or snapshot.
 
 ## 4. Verification checklist
 
@@ -187,6 +195,31 @@ where table_schema = 'public'
     'updated_at'
   )
 order by column_name;
+```
+
+Confirm outfit links have snapshots and a nullable live item reference:
+
+```sql
+select
+  column_name,
+  is_nullable,
+  data_type
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'outfit_items'
+  and column_name in ('wardrobe_item_id', 'wardrobe_item_snapshot')
+order by column_name;
+```
+
+Expect `wardrobe_item_id` to be nullable and `wardrobe_item_snapshot` to be
+`jsonb`. To verify the delete behavior with a disposable test item, link the
+item to an outfit, delete it through the app, and confirm the `outfit_items`
+row remains with a null `wardrobe_item_id` and a non-null snapshot:
+
+```sql
+select id, wardrobe_item_id, wardrobe_item_snapshot
+from public.outfit_items
+where wardrobe_item_snapshot is not null;
 ```
 
 ### Authenticated owner-isolation checks

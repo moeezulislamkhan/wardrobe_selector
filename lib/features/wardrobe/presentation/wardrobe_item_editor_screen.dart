@@ -14,9 +14,12 @@ import '../data/wardrobe_image_picker.dart';
 import '../data/wardrobe_image_processor.dart';
 import '../data/wardrobe_sync_service.dart';
 import '../domain/guest_wardrobe_item.dart';
+import 'wardrobe_photo.dart';
 
 class WardrobeItemEditorScreen extends ConsumerStatefulWidget {
-  const WardrobeItemEditorScreen({super.key});
+  const WardrobeItemEditorScreen({this.itemId, super.key});
+
+  final String? itemId;
 
   @override
   ConsumerState<WardrobeItemEditorScreen> createState() =>
@@ -44,7 +47,49 @@ class _WardrobeItemEditorScreenState
   bool _isPreparingPhoto = false;
   bool _isSaving = false;
   bool _isSyncing = false;
+  bool _isLoadingExisting = false;
   bool _isFavorite = false;
+  GuestWardrobeItem? _existingItem;
+
+  @override
+  void initState() {
+    super.initState();
+    final itemId = widget.itemId;
+    if (itemId != null) {
+      _isLoadingExisting = true;
+      Future<void>(() async {
+        try {
+          final items = await ref.read(wardrobeItemsProvider.future);
+          final item = items
+              .where((candidate) => candidate.localId == itemId)
+              .firstOrNull;
+          if (item == null || item.isDeleted) {
+            throw const AppError('This wardrobe item is no longer available.');
+          }
+          if (!mounted) return;
+          _existingItem = item;
+          _titleController.text = item.title;
+          _categoryController.text = item.category;
+          _subcategoryController.text = item.subcategory ?? '';
+          _primaryColorController.text = item.primaryColor ?? '';
+          _secondaryColorController.text = item.secondaryColor ?? '';
+          _styleTagsController.text = item.styleTags.join(', ');
+          _occasionController.text = item.occasionValues.join(', ');
+          _seasonController.text = item.seasonValues.join(', ');
+          _brandController.text = item.brand ?? '';
+          _notesController.text = item.notes ?? '';
+          _isFavorite = item.isFavorite;
+          setState(() => _isLoadingExisting = false);
+        } on Exception catch (error) {
+          if (!mounted) return;
+          setState(() {
+            _isLoadingExisting = false;
+            _saveError = _messageFor(error);
+          });
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -64,11 +109,24 @@ class _WardrobeItemEditorScreenState
   @override
   Widget build(BuildContext context) {
     final isSaved = _savedLocalId != null;
+    final isEditing = widget.itemId != null;
     return Scaffold(
       appBar: AppBar(
-        title: Text(isSaved ? 'Saved item' : 'Add wardrobe item'),
+        title: Text(
+          isEditing
+              ? 'Edit wardrobe item'
+              : isSaved
+              ? 'Saved item'
+              : 'Add wardrobe item',
+        ),
       ),
-      body: Form(
+      body: _isLoadingExisting
+          ? const Center(
+              child: CircularProgressIndicator(
+                semanticsLabel: 'Loading wardrobe item',
+              ),
+            )
+          : Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -133,7 +191,7 @@ class _WardrobeItemEditorScreenState
               contentPadding: EdgeInsets.zero,
               title: const Text('Favorite'),
               value: _isFavorite,
-              onChanged: isSaved
+              onChanged: isSaved && !isEditing
                   ? null
                   : (value) => setState(() => _isFavorite = value),
             ),
@@ -159,15 +217,19 @@ class _WardrobeItemEditorScreenState
                     ? 'Saving on this device…'
                     : _isSyncing
                     ? 'Syncing…'
+                    : isEditing
+                    ? 'Save changes'
                     : isSaved
                     ? 'Retry cloud upload'
                     : 'Save item',
               ),
             ),
-            if (isSaved)
+            if (isSaved || isEditing)
               TextButton(
-                onPressed: _isSaving || _isSyncing ? null : context.pop,
-                child: const Text('Done'),
+                onPressed: _isSaving || _isSyncing
+                    ? null
+                    : context.pop,
+                child: Text(isEditing ? 'Cancel' : 'Done'),
               ),
           ],
         ),
@@ -184,16 +246,18 @@ class _WardrobeItemEditorScreenState
           aspectRatio: 0.9,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: photo == null
-                ? DecoratedBox(
+            child: photo != null
+                ? Image.memory(photo, fit: BoxFit.cover)
+                : _existingItem?.localImagePath != null
+                ? WardrobePhoto(path: _existingItem!.localImagePath)
+                : DecoratedBox(
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surfaceContainerHigh,
                     ),
                     child: const Center(
                       child: Icon(Icons.add_a_photo_outlined, size: 48),
                     ),
-                  )
-                : Image.memory(photo, fit: BoxFit.cover),
+                  ),
           ),
         ),
         const SizedBox(height: 12),
@@ -201,7 +265,8 @@ class _WardrobeItemEditorScreenState
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _isPreparingPhoto || _savedLocalId != null
+                onPressed: _isPreparingPhoto ||
+                        (_savedLocalId != null && widget.itemId == null)
                     ? null
                     : () => _choosePhoto(ImageSource.camera),
                 icon: const Icon(Icons.camera_alt_outlined),
@@ -211,7 +276,8 @@ class _WardrobeItemEditorScreenState
             const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _isPreparingPhoto || _savedLocalId != null
+                onPressed: _isPreparingPhoto ||
+                        (_savedLocalId != null && widget.itemId == null)
                     ? null
                     : () => _choosePhoto(ImageSource.gallery),
                 icon: const Icon(Icons.photo_library_outlined),
@@ -255,7 +321,7 @@ class _WardrobeItemEditorScreenState
       child: TextFormField(
         key: ValueKey('wardrobe-field-$label'),
         controller: controller,
-        enabled: _savedLocalId == null,
+        enabled: _savedLocalId == null || widget.itemId != null,
         maxLength: maxLength,
         maxLines: maxLines,
         textCapitalization: TextCapitalization.sentences,
@@ -293,6 +359,10 @@ class _WardrobeItemEditorScreenState
   }
 
   Future<void> _saveOrRetry() async {
+    if (widget.itemId != null) {
+      await _saveEdit();
+      return;
+    }
     if (_savedLocalId != null) {
       await _retryCloudUpload();
       return;
@@ -352,6 +422,70 @@ class _WardrobeItemEditorScreenState
     }
   }
 
+  Future<void> _saveEdit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final existingItem = _existingItem;
+    if (existingItem == null) {
+      setState(() => _saveError = 'This wardrobe item could not be loaded.');
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
+    try {
+      final item = GuestWardrobeItem(
+        localId: existingItem.localId,
+        title: _titleController.text.trim(),
+        category: _categoryController.text.trim(),
+        subcategory: _optionalValue(_subcategoryController),
+        createdAt: existingItem.createdAt,
+        primaryColor: _optionalValue(_primaryColorController),
+        secondaryColor: _optionalValue(_secondaryColorController),
+        styleTags: _commaSeparatedValues(_styleTagsController.text),
+        occasion: _optionalValue(_occasionController),
+        season: _optionalValue(_seasonController),
+        brand: _optionalValue(_brandController),
+        size: existingItem.size,
+        notes: _optionalValue(_notesController),
+        localImagePath: existingItem.localImagePath,
+        imageContentType: existingItem.imageContentType,
+        isFavorite: _isFavorite,
+        isArchived: existingItem.isArchived,
+        needsCloudSync: true,
+        hasCloudCopy: existingItem.hasCloudCopy,
+      );
+      final savedItem = await ref
+          .read(wardrobeRepositoryProvider)
+          .updateItem(item, replacementPhotoBytes: _photoBytes);
+      if (!mounted) return;
+      setState(() {
+        _existingItem = savedItem;
+        _photoBytes = null;
+        _isSaving = false;
+      });
+      ref.invalidate(wardrobeItemsProvider);
+
+      final userId = ref.read(authGatewayProvider)?.currentSession?.userId;
+      if (userId == null) {
+        final messenger = ScaffoldMessenger.of(context);
+        context.pop();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Changes saved on this device.')),
+        );
+        return;
+      }
+      await _syncSavedItem(userId);
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _saveError = _messageFor(error);
+      });
+    }
+  }
+
   Future<void> _retryCloudUpload() async {
     final userId = ref.read(authGatewayProvider)?.currentSession?.userId;
     if (userId == null) {
@@ -362,7 +496,7 @@ class _WardrobeItemEditorScreenState
   }
 
   Future<void> _syncSavedItem(String userId) async {
-    final localId = _savedLocalId;
+    final localId = _savedLocalId ?? _existingItem?.localId;
     if (localId == null) return;
     setState(() {
       _isSaving = false;

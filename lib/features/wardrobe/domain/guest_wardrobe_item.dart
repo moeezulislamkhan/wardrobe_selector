@@ -24,7 +24,9 @@ class GuestWardrobeItem {
     this.styleTags = const [],
     this.isFavorite = false,
     this.isArchived = false,
+    this.isDeleted = false,
     this.needsCloudSync = false,
+    this.hasCloudCopy = false,
     this.cloudSyncError,
   }) : title = title ?? name ?? '',
        primaryColor = primaryColor ?? color;
@@ -50,7 +52,9 @@ class GuestWardrobeItem {
   final List<String> styleTags;
   final bool isFavorite;
   final bool isArchived;
+  final bool isDeleted;
   final bool needsCloudSync;
+  final bool hasCloudCopy;
   final String? cloudSyncError;
 
   List<String> get occasionValues => _valuesFor(occasion, occasions);
@@ -61,7 +65,9 @@ class GuestWardrobeItem {
     String? imageContentType,
     bool? isFavorite,
     bool? isArchived,
+    bool? isDeleted,
     bool? needsCloudSync,
+    bool? hasCloudCopy,
     String? cloudSyncError,
     bool clearCloudSyncError = false,
   }) {
@@ -85,7 +91,9 @@ class GuestWardrobeItem {
       styleTags: styleTags,
       isFavorite: isFavorite ?? this.isFavorite,
       isArchived: isArchived ?? this.isArchived,
+      isDeleted: isDeleted ?? this.isDeleted,
       needsCloudSync: needsCloudSync ?? this.needsCloudSync,
+      hasCloudCopy: hasCloudCopy ?? this.hasCloudCopy,
       cloudSyncError: clearCloudSyncError
           ? null
           : cloudSyncError ?? this.cloudSyncError,
@@ -114,7 +122,9 @@ class GuestWardrobeItem {
     'styleTags': styleTags,
     'isFavorite': isFavorite,
     'isArchived': isArchived,
+    'isDeleted': isDeleted,
     'needsCloudSync': needsCloudSync,
+    'hasCloudCopy': hasCloudCopy,
     'cloudSyncError': cloudSyncError,
   };
 
@@ -150,7 +160,9 @@ class GuestWardrobeItem {
       styleTags: _stringList(json, 'styleTags'),
       isFavorite: _optionalBool(json, 'isFavorite'),
       isArchived: _optionalBool(json, 'isArchived'),
+      isDeleted: _optionalBool(json, 'isDeleted'),
       needsCloudSync: _optionalBool(json, 'needsCloudSync'),
+      hasCloudCopy: _optionalBool(json, 'hasCloudCopy'),
       cloudSyncError: _optionalString(json, 'cloudSyncError'),
     );
   }
