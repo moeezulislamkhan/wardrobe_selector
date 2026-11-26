@@ -109,10 +109,76 @@ class OutfitGenerationResult {
   final String? fallbackExplanation;
 }
 
-enum _ItemRole { top, bottom, shoes, layer, accessory, other }
+enum OutfitItemRole { top, bottom, shoes, layer, accessory, other }
 
 class RuleBasedOutfitEngine {
   const RuleBasedOutfitEngine();
+
+  OutfitItemRole roleOf(OutfitItem item) {
+    final category = _normalize('${item.category} ${item.subcategory ?? ''}');
+    if (_containsAny(category, _shoeWords)) return OutfitItemRole.shoes;
+    if (_containsAny(category, _accessoryWords)) {
+      return OutfitItemRole.accessory;
+    }
+    if (_containsAny(category, _layerWords)) return OutfitItemRole.layer;
+    if (_containsAny(category, _bottomWords)) return OutfitItemRole.bottom;
+    if (_containsAny(category, _topWords)) return OutfitItemRole.top;
+
+    final description = _itemText(item);
+    if (_containsAny(description, _shoeWords)) return OutfitItemRole.shoes;
+    if (_containsAny(description, _accessoryWords)) {
+      return OutfitItemRole.accessory;
+    }
+    if (_containsAny(description, _layerWords)) return OutfitItemRole.layer;
+    if (_containsAny(description, _bottomWords)) return OutfitItemRole.bottom;
+    if (_containsAny(description, _topWords)) return OutfitItemRole.top;
+    return OutfitItemRole.other;
+  }
+
+  List<String> compatibilityHints(Iterable<OutfitItem> selectedItems) {
+    final items = <String, OutfitItem>{};
+    for (final item in selectedItems) {
+      items.putIfAbsent(item.id, () => item);
+    }
+    if (items.isEmpty) return const ['Select wardrobe items to see hints.'];
+
+    final values = items.values.toList();
+    final roles = values.map(roleOf).toSet();
+    final hints = <String>[
+      if (!roles.contains(OutfitItemRole.top) ||
+          !roles.contains(OutfitItemRole.bottom) ||
+          !roles.contains(OutfitItemRole.shoes))
+        'Choose a top, bottom, and shoes for a complete outfit.',
+    ];
+
+    final coloredItems = values
+        .where((item) => _itemColors(item).isNotEmpty)
+        .toList();
+    if (coloredItems.length > 1) {
+      final harmony = _colorHarmony(coloredItems);
+      if (harmony >= 1) {
+        hints.add('Saved color labels coordinate.');
+      } else if (harmony < 0) {
+        hints.add('Saved colors may clash; consider swapping a piece.');
+      } else {
+        hints.add('Saved colors have mixed harmony.');
+      }
+    } else {
+      hints.add(
+        'Add color details to more items for color compatibility hints.',
+      );
+    }
+
+    if (_styleCompatibility(values) < 0) {
+      hints.add('Some saved style labels may clash; consider another piece.');
+    }
+    if (hints.length == 1 && roles.length >= 3) {
+      hints.add(
+        'The selected pieces form a complete outfit from your wardrobe.',
+      );
+    }
+    return List.unmodifiable(hints.take(3));
+  }
 
   OutfitGenerationResult generate(
     Iterable<OutfitItem> wardrobe, {
@@ -135,18 +201,18 @@ class RuleBasedOutfitEngine {
     final layers = <OutfitItem>[];
     final accessories = <OutfitItem>[];
     for (final item in uniqueItems.values) {
-      switch (_roleOf(item)) {
-        case _ItemRole.top:
+      switch (roleOf(item)) {
+        case OutfitItemRole.top:
           tops.add(item);
-        case _ItemRole.bottom:
+        case OutfitItemRole.bottom:
           bottoms.add(item);
-        case _ItemRole.shoes:
+        case OutfitItemRole.shoes:
           shoes.add(item);
-        case _ItemRole.layer:
+        case OutfitItemRole.layer:
           layers.add(item);
-        case _ItemRole.accessory:
+        case OutfitItemRole.accessory:
           accessories.add(item);
-        case _ItemRole.other:
+        case OutfitItemRole.other:
           break;
       }
     }
@@ -311,7 +377,7 @@ class RuleBasedOutfitEngine {
         .where((category) => category.isNotEmpty)
         .toSet();
     if (preferredCategories.contains(_normalize(item.category)) ||
-        preferredCategories.contains(_roleName(_roleOf(item)))) {
+        preferredCategories.contains(_roleName(roleOf(item)))) {
       score += 2;
     }
     final preferredTags = request.preferences.styleTags.map(_normalize).toSet();
@@ -450,7 +516,7 @@ class RuleBasedOutfitEngine {
     final tags = preferences.styleTags.map(_normalize).toSet();
     return _itemColors(item).any(colors.contains) ||
         categories.contains(_normalize(item.category)) ||
-        categories.contains(_roleName(_roleOf(item))) ||
+        categories.contains(_roleName(roleOf(item))) ||
         item.styleTags.any((tag) => tags.contains(_normalize(tag)));
   }
 
@@ -473,23 +539,6 @@ class RuleBasedOutfitEngine {
           1.5;
     }
     return score;
-  }
-
-  _ItemRole _roleOf(OutfitItem item) {
-    final category = _normalize('${item.category} ${item.subcategory ?? ''}');
-    if (_containsAny(category, _shoeWords)) return _ItemRole.shoes;
-    if (_containsAny(category, _accessoryWords)) return _ItemRole.accessory;
-    if (_containsAny(category, _layerWords)) return _ItemRole.layer;
-    if (_containsAny(category, _bottomWords)) return _ItemRole.bottom;
-    if (_containsAny(category, _topWords)) return _ItemRole.top;
-
-    final description = _itemText(item);
-    if (_containsAny(description, _shoeWords)) return _ItemRole.shoes;
-    if (_containsAny(description, _accessoryWords)) return _ItemRole.accessory;
-    if (_containsAny(description, _layerWords)) return _ItemRole.layer;
-    if (_containsAny(description, _bottomWords)) return _ItemRole.bottom;
-    if (_containsAny(description, _topWords)) return _ItemRole.top;
-    return _ItemRole.other;
   }
 
   String _styleFamily(OutfitItem item) {
@@ -560,13 +609,13 @@ class RuleBasedOutfitEngine {
     });
   }
 
-  String _roleName(_ItemRole role) => switch (role) {
-    _ItemRole.top => 'top',
-    _ItemRole.bottom => 'bottom',
-    _ItemRole.shoes => 'shoes',
-    _ItemRole.layer => 'layer',
-    _ItemRole.accessory => 'accessory',
-    _ItemRole.other => 'other',
+  String _roleName(OutfitItemRole role) => switch (role) {
+    OutfitItemRole.top => 'top',
+    OutfitItemRole.bottom => 'bottom',
+    OutfitItemRole.shoes => 'shoes',
+    OutfitItemRole.layer => 'layer',
+    OutfitItemRole.accessory => 'accessory',
+    OutfitItemRole.other => 'other',
   };
 
   String _stableKey(OutfitSuggestion suggestion) =>

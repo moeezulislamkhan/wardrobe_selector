@@ -8,6 +8,7 @@ import '../features/onboarding/data/onboarding_repository.dart';
 import '../features/onboarding/presentation/account_entry_screen.dart';
 import '../features/onboarding/presentation/onboarding_screen.dart';
 import '../features/onboarding/presentation/reset_password_screen.dart';
+import '../features/outfits/presentation/manual_outfit_editor_screen.dart';
 import '../features/outfits/presentation/outfits_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/wardrobe/presentation/wardrobe_item_detail_screen.dart';
@@ -88,10 +89,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                       GoRoute(
                         path: 'edit',
                         name: 'wardrobe-item-edit',
-                        builder: (context, state) =>
-                            WardrobeItemEditorScreen(
-                              itemId: state.pathParameters['itemId']!,
-                            ),
+                        builder: (context, state) => WardrobeItemEditorScreen(
+                          itemId: state.pathParameters['itemId']!,
+                        ),
                       ),
                     ],
                   ),
@@ -105,6 +105,29 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: '/outfits',
                 name: 'outfits',
                 builder: (context, state) => const OutfitsScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'create',
+                    name: 'manual-outfit-create',
+                    builder: (context, state) =>
+                        const ManualOutfitEditorScreen(),
+                  ),
+                  GoRoute(
+                    path: 'manual/:outfitId/edit',
+                    name: 'manual-outfit-edit',
+                    builder: (context, state) => ManualOutfitEditorScreen(
+                      outfitId: state.pathParameters['outfitId']!,
+                    ),
+                  ),
+                  GoRoute(
+                    path: 'manual/:outfitId/duplicate',
+                    name: 'manual-outfit-duplicate',
+                    builder: (context, state) => ManualOutfitEditorScreen(
+                      outfitId: state.pathParameters['outfitId']!,
+                      duplicate: true,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

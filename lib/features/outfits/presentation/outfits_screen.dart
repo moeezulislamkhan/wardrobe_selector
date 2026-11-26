@@ -10,6 +10,8 @@ import '../../wardrobe/domain/guest_wardrobe_item.dart';
 import '../../wardrobe/presentation/wardrobe_photo.dart';
 import '../../../core/preferences/preferences_provider.dart';
 import '../data/local_outfit_collection_repository.dart';
+import '../data/manual_outfit_repository.dart';
+import '../domain/manual_outfit.dart';
 import '../domain/rule_based_outfit_engine.dart';
 
 const _wearHistoryKey = 'outfit_last_worn_at_v1';
@@ -43,6 +45,8 @@ class _OutfitsScreenState extends ConsumerState<OutfitsScreen> {
   Map<String, DateTime> _lastWornAt = const {};
   Map<String, LocalOutfitCollectionRecord> _collectionEntries = const {};
   String? _collectionError;
+  List<ManualOutfit> _manualOutfits = const [];
+  String? _manualOutfitsError;
   Set<String> _excludedCombinationKeys = const {};
   final Map<String, OutfitSuggestion> _suggestionOverrides = {};
 
@@ -51,6 +55,7 @@ class _OutfitsScreenState extends ConsumerState<OutfitsScreen> {
     super.initState();
     unawaited(_loadWearHistory());
     unawaited(_loadCollection());
+    unawaited(_loadManualOutfits());
   }
 
   @override
@@ -123,6 +128,31 @@ class _OutfitsScreenState extends ConsumerState<OutfitsScreen> {
           'sent to an AI service.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            key: const ValueKey('create-manual-outfit'),
+            onPressed: _createManualOutfit,
+            icon: const Icon(Icons.add),
+            label: const Text('Create outfit'),
+          ),
+        ),
+        if (_manualOutfitsError case final error?) ...[
+          const SizedBox(height: 12),
+          _InfoMessage(message: error, isError: true),
+        ],
+        if (_manualOutfits.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Text('My outfits', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          for (final outfit in _manualOutfits)
+            _ManualOutfitCard(
+              outfit: outfit,
+              onEdit: () => _editManualOutfit(outfit),
+              onDuplicate: () => _duplicateManualOutfit(outfit),
+            ),
+        ],
         const SizedBox(height: 20),
         _DropdownFilter(
           label: 'Occasion',
@@ -254,6 +284,53 @@ class _OutfitsScreenState extends ConsumerState<OutfitsScreen> {
           ],
         ],
       ],
+    );
+  }
+
+  Future<void> _loadManualOutfits() async {
+    try {
+      final outfits = ref.read(manualOutfitRepositoryProvider).load();
+      if (!mounted) return;
+      setState(() {
+        _manualOutfits = outfits;
+        _manualOutfitsError = null;
+      });
+    } on Exception {
+      if (!mounted) return;
+      setState(() {
+        _manualOutfitsError =
+            'Saved manual outfits could not be loaded from this device.';
+      });
+    }
+  }
+
+  Future<void> _createManualOutfit() async {
+    final savedId = await context.pushNamed<String>('manual-outfit-create');
+    await _afterManualEditor(savedId);
+  }
+
+  Future<void> _editManualOutfit(ManualOutfit outfit) async {
+    final savedId = await context.pushNamed<String>(
+      'manual-outfit-edit',
+      pathParameters: {'outfitId': outfit.id},
+    );
+    await _afterManualEditor(savedId);
+  }
+
+  Future<void> _duplicateManualOutfit(ManualOutfit outfit) async {
+    final savedId = await context.pushNamed<String>(
+      'manual-outfit-duplicate',
+      pathParameters: {'outfitId': outfit.id},
+    );
+    await _afterManualEditor(savedId);
+  }
+
+  Future<void> _afterManualEditor(String? savedId) async {
+    if (savedId == null || !mounted) return;
+    await _loadManualOutfits();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Outfit saved locally · sync pending.')),
     );
   }
 
@@ -715,6 +792,64 @@ class _DropdownFilter extends StatelessWidget {
           onChanged: (value) {
             if (value != null) onChanged(value);
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualOutfitCard extends StatelessWidget {
+  const _ManualOutfitCard({
+    required this.outfit,
+    required this.onEdit,
+    required this.onDuplicate,
+  });
+
+  final ManualOutfit outfit;
+  final VoidCallback onEdit;
+  final VoidCallback onDuplicate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: ValueKey('manual-outfit-card-${outfit.id}'),
+      margin: const EdgeInsets.symmetric(vertical: 5),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(outfit.name, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+              outfit.items
+                  .map((item) => '${item.category}: ${item.title}')
+                  .join(' · '),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              outfit.needsCloudSync ? 'Saved locally · sync pending' : 'Synced',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton.icon(
+                  key: ValueKey('edit-manual-outfit-${outfit.id}'),
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Edit'),
+                ),
+                TextButton.icon(
+                  key: ValueKey('duplicate-manual-outfit-${outfit.id}'),
+                  onPressed: onDuplicate,
+                  icon: const Icon(Icons.copy_outlined),
+                  label: const Text('Duplicate'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
