@@ -222,8 +222,7 @@ void main() {
       expect(config?.publishableKey, 'sb_publishable_public_key');
     });
 
-    test('rejects insecure remote endpoints but permits local development',
-        () {
+    test('rejects insecure remote endpoints but permits local development', () {
       expect(
         () => SupabaseConfig.parse(
           url: 'http://wardrobe.example.com',
@@ -283,6 +282,59 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Sign out'));
     await tester.pumpAndSettle();
     expect(find.text('Using guest mode'), findsOneWidget);
+  });
+
+  testWidgets('account deletion requires confirmation and signs out', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'onboarding_completed': true,
+      'wardrobe_items_v1': jsonEncode([
+        _item('local-item', image: false).toJson(),
+      ]),
+    });
+    final preferences = await SharedPreferences.getInstance();
+    final gateway = _FakeAuthGateway(
+      initialSession: const AuthSession(
+        userId: '4c4a8f3d-bded-44ee-821d-1d8ce5a77504',
+        email: 'style@example.com',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(preferences),
+          authGatewayProvider.overrideWithValue(gateway),
+        ],
+        child: const WardrobeApp(),
+      ),
+    );
+    addTearDown(gateway.dispose);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Settings'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Signed in'), findsOneWidget);
+
+    await tester.tap(find.text('Delete account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete your account?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(gateway.deleteAccountCalls, 0);
+    expect(find.text('Signed in'), findsOneWidget);
+
+    await tester.tap(find.text('Delete account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete account').last);
+    await tester.pumpAndSettle();
+    expect(gateway.deleteAccountCalls, 1);
+    expect(find.text('Using guest mode'), findsOneWidget);
+    expect(preferences.getString('wardrobe_items_v1'), isNotNull);
   });
 
   testWidgets('password reset reports success and auth errors are visible', (
@@ -457,6 +509,7 @@ class _FakeAuthGateway implements AuthGateway {
   AuthSession? _session;
   String? passwordResetEmail;
   String? updatedPassword;
+  int deleteAccountCalls = 0;
   AuthFailure? nextFailure;
 
   @override
@@ -509,6 +562,13 @@ class _FakeAuthGateway implements AuthGateway {
 
   @override
   Future<void> signOut() async {
+    _session = null;
+    _events.add(null);
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    deleteAccountCalls++;
     _session = null;
     _events.add(null);
   }

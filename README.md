@@ -49,11 +49,15 @@ rewrite past records. Deleting a plan and its history requires explicit
 confirmation. Plans and snapshots remain available offline after the app has
 cached the wardrobe. SQLite uses the native database on mobile and
 WASM/IndexedDB on web. Plan sync runs asynchronously for signed-in users, and
-each plan shows its own sync state.
+each plan shows its own sync state. Wardrobe and plan sync currently pushes
+local changes only; it does not pull remote changes to another device or
+resolve concurrent edits. Two-device sync and conflict resolution are not yet
+supported.
 
 ## Optional Supabase setup
 
-The app supports optional Supabase authentication and wardrobe-image sync.
+The app supports optional Supabase authentication, wardrobe-image sync, and
+week-plan sync.
 Follow the [Supabase setup guide](supabase/README.md) to create a project, apply
 the schema and Storage policies, configure client-safe Flutter values, and
 verify owner isolation. Never put a service-role or secret key in the app or

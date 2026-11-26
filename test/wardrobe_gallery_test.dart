@@ -201,6 +201,36 @@ void main() {
     },
   );
 
+  test('saved item metadata and photo survive repository restart', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = await SharedPreferences.getInstance();
+    final directory = await Directory.systemTemp.createTemp(
+      'wardrobe-restart-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final photoBytes = await const WardrobeImageProcessor().compress(
+      _tinyPng(),
+    );
+    final firstRepository = LocalWardrobeRepository(
+      preferences,
+      photoStorage: _DiskPhotoStorage(directory),
+    );
+    final saved = await firstRepository.createItem(blouse, photoBytes);
+
+    final restartedRepository = LocalWardrobeRepository(
+      preferences,
+      photoStorage: _DiskPhotoStorage(directory),
+    );
+    final reloaded = await restartedRepository.loadItems();
+
+    expect(reloaded.single.localId, saved.localId);
+    expect(reloaded.single.localImagePath, saved.localImagePath);
+    expect(
+      await restartedRepository.readImage(saved.localImagePath!),
+      photoBytes,
+    );
+  });
+
   test('offline cloud failure keeps the local item queued for retry', () async {
     SharedPreferences.setMockInitialValues({});
     final preferences = await SharedPreferences.getInstance();
@@ -665,6 +695,28 @@ class _MemoryPhotoStorage implements WardrobePhotoStorage {
   @override
   Future<void> delete(String path) async {
     images.remove(path.replaceFirst('memory://', ''));
+  }
+}
+
+class _DiskPhotoStorage implements WardrobePhotoStorage {
+  const _DiskPhotoStorage(this.directory);
+
+  final Directory directory;
+
+  @override
+  Future<String> save(String localId, Uint8List bytes) async {
+    final file = File('${directory.path}${Platform.pathSeparator}$localId.jpg');
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
+  @override
+  Future<Uint8List> read(String path) => File(path).readAsBytes();
+
+  @override
+  Future<void> delete(String path) async {
+    final file = File(path);
+    if (await file.exists()) await file.delete();
   }
 }
 

@@ -22,4 +22,6 @@ abstract interface class AuthGateway {
   Future<void> updatePassword(String password);
 
   Future<void> signOut();
+
+  Future<void> deleteAccount();
 }

@@ -1,9 +1,10 @@
 # Supabase setup
 
 Supabase is optional. Guest mode remains available when Supabase is not
-configured. The checked-in migration adds owner-scoped outfit-plan history to
-an existing Supabase schema. The profile, wardrobe, outfit, preference, and
-private `wardrobe-images` base schema must already be present.
+configured. The checked-in migrations create the app schema, owner-scoped
+policies, private `wardrobe-images` bucket, and outfit-plan history. The base
+migration also adds the current wardrobe fields and safe outfit-item snapshots
+to the earlier wardrobe table shape used by this app.
 
 ## 1. Create a project and apply the migration
 
@@ -17,22 +18,23 @@ private `wardrobe-images` base schema must already be present.
    supabase login
    ```
 
-3. This checkout includes the additive plan-history migration only. It expects
-   `outfit_plans`, `outfits`, `outfit_items`, and the
-   `outfit_items.wardrobe_item_snapshot` column to exist already. It does not
-   initialize a blank Supabase project. For a project with its base schema and
-   migration history configured, link the project and apply the unapplied
-   migration:
+3. This checkout includes ordered base-schema and plan-history migrations.
+   The base migration uses `create table if not exists` and adds missing
+   wardrobe fields, so it can initialize a new project or extend the legacy
+   `wardrobe_items` shape described below. It does not drop application tables
+   or rows. Link the project and apply the migrations:
 
    ```shell
    supabase link --project-ref YOUR_PROJECT_REF
    supabase db push
    ```
 
-   The included `20261128120000_outfit_plan_history.sql` migration adds plan
-   statuses and immutable, owner-scoped date-history snapshots. On an existing
-   project whose schema was applied manually, paste this migration into the SQL
-   Editor instead; reconcile CLI migration history before switching back to
+   The `20261128115900_supabase_base_schema.sql` migration creates the six
+   application tables, owner checks, triggers, indexes, and private Storage
+   bucket. The `20261128120000_outfit_plan_history.sql` migration adds plan
+   statuses and owner-scoped date-history snapshots. On a project whose schema
+   was applied manually, apply the migrations in timestamp order in the SQL
+   Editor; reconcile CLI migration history before switching back to
    `supabase db push`.
 
    If earlier migrations have already been applied, run only unapplied
@@ -47,6 +49,18 @@ private `wardrobe-images` base schema must already be present.
    allowlist for the app. The default password-reset redirect is
    `wardrobe://auth-callback`; allowlist it, or use the platform-specific
    redirect URI and configure `SUPABASE_AUTH_REDIRECT_URL` to match.
+
+5. Deploy the account-deletion Edge Function:
+
+   ```shell
+   supabase functions deploy delete-account
+   ```
+
+   The function validates the caller's access token, deletes that user's
+   `wardrobe-images` objects, then deletes the auth account (which cascades
+   owner-scoped database rows). It requires `SUPABASE_SERVICE_ROLE_KEY` only in
+   the Edge Function environment; never put it in Flutter or source control.
+   The app keeps this device's local wardrobe and photos as guest data.
 
 ## 2. Configure Flutter with client-safe values
 

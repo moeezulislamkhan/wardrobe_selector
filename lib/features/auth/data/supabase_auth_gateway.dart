@@ -5,10 +5,7 @@ import '../domain/auth_gateway.dart';
 import '../domain/auth_session.dart';
 
 class SupabaseAuthGateway implements AuthGateway {
-  SupabaseAuthGateway(
-    this._client, {
-    required this.passwordResetRedirect,
-  });
+  SupabaseAuthGateway(this._client, {required this.passwordResetRedirect});
 
   final SupabaseClient _client;
   final String passwordResetRedirect;
@@ -17,8 +14,9 @@ class SupabaseAuthGateway implements AuthGateway {
   AuthSession? get currentSession => _toSession(_client.auth.currentSession);
 
   @override
-  Stream<AuthSession?> get sessionChanges => _client.auth.onAuthStateChange
-      .map((authState) => _toSession(authState.session));
+  Stream<AuthSession?> get sessionChanges => _client.auth.onAuthStateChange.map(
+    (authState) => _toSession(authState.session),
+  );
 
   @override
   Stream<bool> get passwordRecoveryChanges => _client.auth.onAuthStateChange
@@ -75,6 +73,17 @@ class SupabaseAuthGateway implements AuthGateway {
     return _run('sign out', _client.auth.signOut);
   }
 
+  @override
+  Future<void> deleteAccount() {
+    return _run('delete your account', () async {
+      if (_client.auth.currentSession == null) {
+        throw const AuthFailure('Sign in before deleting your account.');
+      }
+      await _client.functions.invoke('delete-account');
+      await _client.auth.signOut(scope: SignOutScope.local);
+    });
+  }
+
   AuthFailure _failureFor(String action, AuthException error) {
     final code = error.code?.toLowerCase();
     final message = error.message.toLowerCase();
@@ -92,9 +101,7 @@ class SupabaseAuthGateway implements AuthGateway {
       return const AuthFailure('Choose a stronger password and try again.');
     }
     if (code == 'email_not_confirmed') {
-      return const AuthFailure(
-        'Verify your email address before signing in.',
-      );
+      return const AuthFailure('Verify your email address before signing in.');
     }
     if (error is AuthRetryableFetchException || error.statusCode == '429') {
       return const AuthFailure(
